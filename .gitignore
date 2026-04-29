@@ -1,0 +1,24 @@
+node_modules
+dist
+.env
+.env.local
+.env.*.local
+*.log
+
+# Server data volume contents (only relevant when running locally without docker)
+server/data/*.sqlite
+server/data/*.sqlite-journal
+server/data/*.sqlite-wal
+server/data/*.sqlite-shm
+server/data/photos/
+server/data/baileys-auth/
+
+# Probe output (may contain real customer data from the live tenant)
+splynx-probe.json
+splynx-files-probe.json
+server/splynx-probe.json
+server/splynx-files-probe.json
+
+.DS_Store
+.vscode/
+.idea/

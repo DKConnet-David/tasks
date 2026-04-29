@@ -1,0 +1,101 @@
+import Database from "better-sqlite3";
+import path from "node:path";
+import fs from "node:fs";
+
+let db: Database.Database | null = null;
+
+export function getDb(dataDir: string): Database.Database {
+  if (db) return db;
+  fs.mkdirSync(dataDir, { recursive: true });
+  const file = path.join(dataDir, "app.sqlite");
+  db = new Database(file);
+  db.pragma("journal_mode = WAL");
+  db.pragma("foreign_keys = ON");
+  migrate(db);
+  return db;
+}
+
+function migrate(d: Database.Database): void {
+  d.exec(`
+    CREATE TABLE IF NOT EXISTS sessions (
+      id TEXT PRIMARY KEY,
+      splynx_user_id INTEGER NOT NULL,
+      splynx_login TEXT NOT NULL,
+      access_token TEXT NOT NULL,
+      refresh_token TEXT NOT NULL,
+      expires_at INTEGER NOT NULL,
+      is_admin INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS submissions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      task_id INTEGER NOT NULL,
+      splynx_user_id INTEGER NOT NULL,
+      splynx_login TEXT NOT NULL,
+      source TEXT NOT NULL DEFAULT 'tech',
+      comment TEXT,
+      tech_comment_override TEXT,
+      summary_json TEXT,
+      corrected_summary_json TEXT,
+      splynx_comment_id INTEGER,
+      splynx_corrected_comment_id INTEGER,
+      splynx_pdf_file_id INTEGER,
+      wa_message_id TEXT,
+      status TEXT NOT NULL,
+      error TEXT,
+      admin_resolved INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_submissions_task ON submissions(task_id);
+    CREATE INDEX IF NOT EXISTS idx_submissions_login ON submissions(splynx_login);
+    CREATE INDEX IF NOT EXISTS idx_submissions_status ON submissions(status);
+    CREATE INDEX IF NOT EXISTS idx_submissions_created ON submissions(created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS submission_photos (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      submission_id INTEGER NOT NULL,
+      filename TEXT NOT NULL,
+      size_bytes INTEGER NOT NULL,
+      width INTEGER,
+      height INTEGER,
+      splynx_file_id INTEGER,
+      created_at INTEGER NOT NULL,
+      FOREIGN KEY (submission_id) REFERENCES submissions(id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_photos_submission ON submission_photos(submission_id);
+
+    CREATE TABLE IF NOT EXISTS admin_actions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      submission_id INTEGER NOT NULL,
+      action TEXT NOT NULL,
+      details_json TEXT,
+      created_at INTEGER NOT NULL,
+      FOREIGN KEY (submission_id) REFERENCES submissions(id)
+    );
+
+    -- Ratings live in their own table to enforce data compartmentalisation;
+    -- see server/src/types.ts for the type-firewall rationale.
+    CREATE TABLE IF NOT EXISTS submission_ratings (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      submission_id INTEGER NOT NULL UNIQUE,
+      ai_score INTEGER NOT NULL,
+      ai_rationale TEXT NOT NULL,
+      ai_dimensions_json TEXT NOT NULL,
+      admin_score INTEGER,
+      admin_rationale TEXT,
+      admin_dimensions_json TEXT,
+      reviewed_at INTEGER,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      FOREIGN KEY (submission_id) REFERENCES submissions(id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_ratings_reviewed
+      ON submission_ratings(reviewed_at DESC)
+      WHERE admin_score IS NOT NULL;
+  `);
+}

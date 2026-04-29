@@ -1,0 +1,81 @@
+:root {
+  --c-bg: #0e1116;
+  --c-panel: #161b22;
+  --c-text: #e6edf3;
+  --c-muted: #8b949e;
+  --c-accent: #2f81f7;
+  --c-success: #3fb950;
+  --c-warn: #d29922;
+  --c-danger: #f85149;
+  --c-border: #30363d;
+  --r: 8px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+html, body, #root { height: 100%; }
+
+body {
+  margin: 0;
+  background: var(--c-bg);
+  color: var(--c-text);
+  -webkit-font-smoothing: antialiased;
+}
+
+a { color: var(--c-accent); }
+
+button {
+  font: inherit;
+  background: var(--c-accent);
+  color: white;
+  border: none;
+  border-radius: var(--r);
+  padding: 0.7rem 1rem;
+  cursor: pointer;
+}
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+button.secondary { background: var(--c-panel); border: 1px solid var(--c-border); }
+button.danger { background: var(--c-danger); }
+
+input, textarea, select {
+  font: inherit;
+  background: var(--c-panel);
+  color: var(--c-text);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+  padding: 0.6rem 0.8rem;
+  width: 100%;
+}
+
+textarea { min-height: 100px; resize: vertical; }
+
+.container { max-width: 720px; margin: 0 auto; padding: 1rem; }
+.admin-container { max-width: 1200px; margin: 0 auto; padding: 1rem; }
+
+.panel {
+  background: var(--c-panel);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+  padding: 1rem;
+}
+
+.row { display: flex; gap: 0.5rem; align-items: center; }
+.stack { display: flex; flex-direction: column; gap: 0.75rem; }
+
+.muted { color: var(--c-muted); }
+.success { color: var(--c-success); }
+.warn { color: var(--c-warn); }
+.danger { color: var(--c-danger); }
+
+.badge {
+  display: inline-block;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  background: var(--c-panel);
+  border: 1px solid var(--c-border);
+}
+.badge.success { color: var(--c-success); border-color: var(--c-success); }
+.badge.warn { color: var(--c-warn); border-color: var(--c-warn); }
+.badge.danger { color: var(--c-danger); border-color: var(--c-danger); }
