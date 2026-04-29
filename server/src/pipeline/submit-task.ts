@@ -183,48 +183,13 @@ export async function runSubmissionPipeline(args: PipelineArgs): Promise<Pipelin
     }
   }
 
-  // ---- 4. Splynx: photos as task attachments ----
-  if (photoData.length > 0) {
-    try {
-      const splynx = getServiceSplynxClient(config);
-      const descriptions = summary.photo_descriptions ?? [];
-      const result = await splynx.addTaskAttachments(
-        taskId,
-        splynxAdminId,
-        photoData.map((p, i) => ({
-          buffer: p.buffer,
-          filename: photoFilename(i, descriptions[i]),
-          mimetype: "image/jpeg",
-        })),
-      );
-      splynxAttachmentIds.push(...result.files);
+  // Photos used to be uploaded to the Splynx Attachments tab here, but the
+  // PDF report's Section 6 already includes the full photo grid, so the
+  // separate per-photo upload was duplicate work and clutter. Photos are
+  // still kept in the local archive (data/photos/) and accessible from the
+  // admin UI; only the Splynx-side per-photo attach step was dropped.
 
-      // Map per-photo splynx ids back to submission_photos rows so the admin
-      // UI can show "uploaded to Splynx as #N". The order returned by Splynx
-      // matches the multipart upload order.
-      const updatePhoto = db.prepare(
-        `UPDATE submission_photos SET splynx_file_id = ? WHERE id = ?`,
-      );
-      for (let i = 0; i < photoData.length; i++) {
-        const fileId = result.files[i];
-        const photo = photoData[i];
-        if (fileId === undefined || photo === undefined) continue;
-        updatePhoto.run(fileId, photo.id);
-      }
-      log.info(
-        { submissionId, count: result.files.length },
-        "Splynx photo attachments uploaded",
-      );
-    } catch (err) {
-      const e = err as { response?: { status?: number }; message?: string };
-      log.error({ err: e }, "Splynx photo upload failed");
-      errors.push(
-        `Splynx photo upload failed (${e.response?.status ?? "?"}): ${e.message ?? "unknown error"}`,
-      );
-    }
-  }
-
-  // ---- 5. WhatsApp: send caption + PDF to the configured group ----
+  // ---- 4. WhatsApp: send caption + PDF to the configured group ----
   if (pdfBuffer && summary) {
     try {
       const caption = formatWhatsAppCaption(summary, task, appLogin, config.SPLYNX_BASE_URL);
@@ -268,35 +233,6 @@ export async function runSubmissionPipeline(args: PipelineArgs): Promise<Pipelin
     whatsappMessageId,
     errors,
   };
-}
-
-/**
- * Build a Splynx attachment filename from the AI's photo description.
- * Picks whole words up to a 60-char budget so we never end mid-word.
- *
- *   "Network speed test showing 64.90 Mbps download" + idx 0
- *     -> "01-network-speed-test-showing-6490-mbps-download.jpg"
- *   undefined / empty + idx 4
- *     -> "05-photo.jpg"
- */
-function photoFilename(index: number, description: string | undefined): string {
-  const num = String(index + 1).padStart(2, "0");
-  const cleanWords = (description ?? "")
-    .toLowerCase()
-    .normalize("NFKD")
-    .split(/\s+/)
-    .map((w) => w.replace(/[^\p{Letter}\p{Number}]/gu, ""))
-    .filter(Boolean);
-
-  const picked: string[] = [];
-  let len = 0;
-  for (const word of cleanWords) {
-    if (picked.length > 0 && len + word.length + 1 > 60) break;
-    picked.push(word);
-    len += word.length + (picked.length > 0 ? 1 : 0);
-  }
-  const slug = picked.join("-");
-  return slug ? `${num}-${slug}.jpg` : `${num}-photo.jpg`;
 }
 
 function persistRating(

@@ -294,17 +294,9 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
       if (!isSplynxConfigured(config))
         return reply.code(503).send({ error: "splynx_not_configured" });
 
-      const photos = db
-        .prepare(
-          `SELECT id, filename, width, height FROM submission_photos
-           WHERE submission_id = ? ORDER BY id ASC`,
-        )
-        .all(id) as Array<{ id: number; filename: string; width: number; height: number }>;
-
       const splynx = getServiceSplynxClient(config);
       const errors: string[] = [];
       let commentId: number | null = null;
-      let attachmentIds: number[] = [];
 
       // PDF
       try {
@@ -334,44 +326,12 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
         errors.push(`PDF reattach failed: ${err instanceof Error ? err.message : String(err)}`);
       }
 
-      // Photos
-      if (photos.length > 0) {
-        try {
-          // Reuse the descriptions from the (possibly corrected) summary so
-          // the re-attached filenames match the first attempt.
-          const summaryJson = sub.corrected_summary_json ?? sub.summary_json;
-          const descriptions: string[] = (() => {
-            if (!summaryJson) return [];
-            const obj = safeParse(summaryJson) as
-              | { photo_descriptions?: unknown; photo_captions?: unknown }
-              | null;
-            const fromDescriptions = Array.isArray(obj?.photo_descriptions)
-              ? obj.photo_descriptions.filter((s): s is string => typeof s === "string")
-              : [];
-            if (fromDescriptions.length > 0) return fromDescriptions;
-            // Legacy fallback: very old rows may only have photo_captions.
-            return Array.isArray(obj?.photo_captions)
-              ? obj.photo_captions.filter((s): s is string => typeof s === "string")
-              : [];
-          })();
-          const buffers = await Promise.all(
-            photos.map(async (p, i) => ({
-              buffer: await fs.readFile(
-                photoPath(config.DATA_DIR, sub.task_id, sub.id, p.filename),
-              ),
-              filename: filenameFor(i, descriptions[i]),
-              mimetype: "image/jpeg",
-            })),
-          );
-          const result = await splynx.addTaskAttachments(sub.task_id, sub.splynx_admin_id, buffers);
-          attachmentIds = result.files;
-        } catch (err) {
-          errors.push(`Photos reattach failed: ${err instanceof Error ? err.message : String(err)}`);
-        }
-      }
+      // Photos used to be re-uploaded to Splynx Attachments tab here too,
+      // but the PDF already contains the full photo grid so it was
+      // redundant clutter. Re-attach now reposts the comment + PDF only.
 
-      recordAdminAction(db, id, "reattach_splynx", { commentId, attachmentIds, errors });
-      return { ok: errors.length === 0, comment_id: commentId, attachment_ids: attachmentIds, errors };
+      recordAdminAction(db, id, "reattach_splynx", { commentId, errors });
+      return { ok: errors.length === 0, comment_id: commentId, errors };
     },
   );
 
@@ -777,22 +737,4 @@ function safeParse(json: string): unknown {
   }
 }
 
-function filenameFor(index: number, description: string | undefined): string {
-  const num = String(index + 1).padStart(2, "0");
-  const cleanWords = (description ?? "")
-    .toLowerCase()
-    .normalize("NFKD")
-    .split(/\s+/)
-    .map((w) => w.replace(/[^\p{Letter}\p{Number}]/gu, ""))
-    .filter(Boolean);
-  const picked: string[] = [];
-  let len = 0;
-  for (const word of cleanWords) {
-    if (picked.length > 0 && len + word.length + 1 > 60) break;
-    picked.push(word);
-    len += word.length + (picked.length > 0 ? 1 : 0);
-  }
-  const slug = picked.join("-");
-  return slug ? `${num}-${slug}.jpg` : `${num}-photo.jpg`;
-}
 
