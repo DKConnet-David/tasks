@@ -41,21 +41,20 @@ the repo):
 
 ## 3. Bind the domain
 
-1. **Domains** tab → add `taskupdater.dkconnect.co.za` (or whichever subdomain
-   you prefer) → assign to the **`web`** service.
-2. Coolify provisions Let's Encrypt SSL automatically.
-3. For the API path, you have two options:
-   - **(simpler)** add a second domain on the same record like
-     `api.taskupdater.dkconnect.co.za` → assign to the **`api`** service.
-     Update `web`'s nginx config to proxy `/auth`, `/tasks`, `/admin` calls
-     to the API host (one config change in `web/nginx.conf`, redeploy).
-   - **(cleaner)** keep a single domain, and add a Traefik label on the `api`
-     service to route `taskupdater.dkconnect.co.za/auth*`,
-     `/tasks*`, `/admin*` to `api:3000`. Coolify supports custom labels in
-     the compose file — we can wire that in once you tell me your preferred
-     subdomain layout.
+The architecture is **single-port**: only the `web` container is exposed (on
+port `9090`). nginx inside `web` reverse-proxies `/auth`, `/tasks`, `/admin`,
+and `/health` to the `api` container over the internal Docker network. The
+`api` service is not reachable from outside.
 
-   _For the first deploy, pick the simpler option (separate `api.` subdomain)._
+1. **Domains** tab → add `taskupdater.dkconnect.co.za` → assign to the
+   **`web`** service, mapped to container port `80` (Coolify's Traefik
+   handles the public-side TLS and routes to the container's internal port,
+   which is what the host port `9090` maps to).
+2. Coolify provisions Let's Encrypt SSL automatically.
+
+If you prefer Coolify's "expose port directly" path instead of binding a
+domain, the host port is `9090` — open `http://<your-server-ip>:9090` and
+make sure the firewall allows it.
 
 ## 4. Persistent storage
 
@@ -74,8 +73,9 @@ addon builds for `sharp` / `better-sqlite3` / `baileys`).
 After "Healthy":
 
 ```bash
-curl https://taskupdater.dkconnect.co.za/health      # PWA — should return the SPA HTML
-curl https://api.taskupdater.dkconnect.co.za/health  # API — should return {"ok":true}
+# Replace with the URL Coolify gave you (or http://<server-ip>:9090 if no domain).
+curl https://taskupdater.dkconnect.co.za/health   # → {"ok":true}  (proxied to api container)
+curl https://taskupdater.dkconnect.co.za/         # → returns the SPA HTML
 ```
 
 Then open `https://taskupdater.dkconnect.co.za` in a browser. You'll see the

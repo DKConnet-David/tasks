@@ -8,8 +8,8 @@ services:
       PORT: 3000
     volumes:
       - data:/data
-    ports:
-      - "3000:3000"
+    expose:
+      - "3000"
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
@@ -19,8 +19,11 @@ services:
 
   web:
     build: ./web
+    # Single public port — nginx in this container serves the PWA and
+    # reverse-proxies /auth, /tasks, /admin, /health to the api service
+    # over the internal Docker network. The api service is not exposed.
     ports:
-      - "8080:80"
+      - "9090:80"
     restart: unless-stopped
     depends_on:
       - api
