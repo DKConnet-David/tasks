@@ -15,6 +15,15 @@ interface TaskSubset {
   address: string;
 }
 
+/**
+ * Build the URL of a task in the Splynx admin UI. Splynx (modern versions)
+ * runs as a hash-routed SPA so the path is `/admin#scheduling/tasks/{id}`.
+ * If your tenant uses a different pattern, adjust this single function.
+ */
+export function splynxTaskUrl(splynxBaseUrl: string, taskId: number): string {
+  return `${splynxBaseUrl.replace(/\/+$/, "")}/admin#scheduling/tasks/${taskId}`;
+}
+
 export function formatSplynxComment(
   summary: ExternalSummary,
   techName: string,
@@ -39,19 +48,23 @@ export function formatSplynxComment(
   return parts.join("");
 }
 
+/**
+ * Short WhatsApp caption: headline, location, tech, and a link to the task
+ * in Splynx. The attached PDF carries the full report — keep this brief so
+ * the message is glanceable in the group feed.
+ */
 export function formatWhatsAppCaption(
   summary: ExternalSummary,
   task: TaskSubset,
   techName: string,
+  splynxBaseUrl: string,
 ): string {
   const lines: string[] = [];
   lines.push(`*${summary.headline}*`);
   if (task.address) lines.push(`📍 ${task.address}`);
   lines.push(`Task #${task.id}  •  ${techName}`);
   lines.push("");
-  lines.push(summary.what_was_done);
-  if (summary.observations.trim()) lines.push("", `*Observations:* ${summary.observations}`);
-  if (summary.follow_ups.trim()) lines.push("", `*Follow-ups:* ${summary.follow_ups}`);
+  lines.push(`🔗 ${splynxTaskUrl(splynxBaseUrl, task.id)}`);
   return lines.join("\n");
 }
 

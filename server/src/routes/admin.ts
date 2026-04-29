@@ -260,7 +260,7 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
       try {
         const result = await pipelineSendDocument({
           config,
-          caption: formatWhatsAppCaption(summary, taskShape, sub.app_login),
+          caption: formatWhatsAppCaption(summary, taskShape, sub.app_login, config.SPLYNX_BASE_URL),
           pdfBuffer,
           fileName: `task-${sub.task_id}-submission-${sub.id}.pdf`,
         });

@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { ApiError, api } from "../../api";
 import { PhotoCapture, type CapturedPhoto } from "../../components/PhotoCapture";
+import { SubmitProgress, type SubmitPhase } from "../../components/SubmitProgress";
 
 interface SubmitResponse {
   submission_id: number;
@@ -16,8 +17,12 @@ export function ManualSubmit() {
   const [onBehalfOfLogin, setOnBehalfOfLogin] = useState("");
   const [onBehalfOfAdminId, setOnBehalfOfAdminId] = useState("");
   const [photos, setPhotos] = useState<CapturedPhoto[]>([]);
-  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [phase, setPhase] = useState<SubmitPhase>("idle");
+  const [uploadFraction, setUploadFraction] = useState<number | null>(null);
+  const [uploadLoaded, setUploadLoaded] = useState(0);
+  const [uploadTotal, setUploadTotal] = useState(0);
+  const busy = phase === "uploading" || phase === "processing";
 
   // Cleanup blob URLs on unmount.
   useEffect(() => {
@@ -38,8 +43,11 @@ export function ManualSubmit() {
       setError("Add at least one photo.");
       return;
     }
-    setBusy(true);
     setError(null);
+    setPhase("uploading");
+    setUploadFraction(0);
+    setUploadLoaded(0);
+    setUploadTotal(photos.reduce((s, p) => s + p.file.size, 0));
     try {
       const fd = new FormData();
       fd.append("task_id", String(id));
@@ -48,7 +56,18 @@ export function ManualSubmit() {
       if (onBehalfOfAdminId.trim())
         fd.append("on_behalf_of_admin_id", onBehalfOfAdminId.trim());
       for (const p of photos) fd.append("photos", p.file, p.file.name || "photo.jpg");
-      const res = await api.upload<SubmitResponse>("/admin/submissions/manual", fd);
+      const res = await api.upload<SubmitResponse>("/admin/submissions/manual", fd, {
+        onProgress: (p) => {
+          setUploadFraction(p.fraction);
+          setUploadLoaded(p.loaded);
+          if (p.total) setUploadTotal(p.total);
+        },
+        onUploadComplete: () => {
+          setUploadFraction(1);
+          setPhase("processing");
+        },
+      });
+      setPhase("done");
       nav(`/admin/submissions/${res.submission_id}`);
     } catch (e: unknown) {
       if (e instanceof ApiError) {
@@ -58,7 +77,7 @@ export function ManualSubmit() {
       } else {
         setError("Network error");
       }
-      setBusy(false);
+      setPhase("error");
     }
   }
 

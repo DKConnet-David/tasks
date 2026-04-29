@@ -227,7 +227,7 @@ export async function runSubmissionPipeline(args: PipelineArgs): Promise<Pipelin
   // ---- 5. WhatsApp: send caption + PDF to the configured group ----
   if (pdfBuffer && summary) {
     try {
-      const caption = formatWhatsAppCaption(summary, task, appLogin);
+      const caption = formatWhatsAppCaption(summary, task, appLogin, config.SPLYNX_BASE_URL);
       const fileName = `task-${taskId}-submission-${submissionId}.pdf`;
       const result = await pipelineSendDocument({
         config,

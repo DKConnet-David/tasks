@@ -122,7 +122,12 @@ describe("rating containment (leak test)", () => {
   });
 
   it("WhatsApp caption never includes rating rationale phrases", () => {
-    const caption = formatWhatsAppCaption(summary, task, "lorenzo");
+    const caption = formatWhatsAppCaption(
+      summary,
+      task,
+      "lorenzo",
+      "https://clientzone.dkconnect.co.za",
+    );
     expect(caption).not.toContain(RATING_RATIONALE_NEEDLE);
     expect(caption).not.toContain(ADMIN_NEEDLE);
   });

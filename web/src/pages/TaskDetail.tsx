@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { ApiError, api } from "../api";
 import { PhotoCapture, type CapturedPhoto } from "../components/PhotoCapture";
+import { SubmitProgress, type SubmitPhase } from "../components/SubmitProgress";
 
 interface SplynxTaskRaw {
   id: number;
@@ -44,8 +45,12 @@ export function TaskDetail() {
 
   const [photos, setPhotos] = useState<CapturedPhoto[]>([]);
   const [comment, setComment] = useState("");
-  const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [phase, setPhase] = useState<SubmitPhase>("idle");
+  const [uploadFraction, setUploadFraction] = useState<number | null>(null);
+  const [uploadLoaded, setUploadLoaded] = useState(0);
+  const [uploadTotal, setUploadTotal] = useState(0);
+  const submitting = phase === "uploading" || phase === "processing";
 
   useEffect(() => {
     if (!id) return;
@@ -83,13 +88,29 @@ export function TaskDetail() {
       setSubmitError("Please attach at least one photo.");
       return;
     }
-    setSubmitting(true);
     setSubmitError(null);
+    setPhase("uploading");
+    setUploadFraction(0);
+    setUploadLoaded(0);
+    setUploadTotal(photos.reduce((s, p) => s + p.file.size, 0));
+
     try {
       const fd = new FormData();
       fd.append("comment", comment);
       for (const p of photos) fd.append("photos", p.file, p.file.name || "photo.jpg");
-      const res = await api.upload<SubmitResponse>(`/tasks/${id}/submit`, fd);
+
+      const res = await api.upload<SubmitResponse>(`/tasks/${id}/submit`, fd, {
+        onProgress: (p) => {
+          setUploadFraction(p.fraction);
+          setUploadLoaded(p.loaded);
+          if (p.total) setUploadTotal(p.total);
+        },
+        onUploadComplete: () => {
+          setUploadFraction(1);
+          setPhase("processing");
+        },
+      });
+      setPhase("done");
       nav(`/submitting/${res.submission_id}`);
     } catch (e: unknown) {
       if (e instanceof ApiError) {
@@ -103,7 +124,7 @@ export function TaskDetail() {
       } else {
         setSubmitError("Submit failed — network error.");
       }
-      setSubmitting(false);
+      setPhase("error");
     }
   }
 
@@ -211,8 +232,20 @@ export function TaskDetail() {
         {submitError && <div className="danger">{submitError}</div>}
 
         <button onClick={handleSubmit} disabled={submitting || photos.length === 0}>
-          {submitting ? "Submitting…" : "Submit update"}
+          {phase === "uploading"
+            ? "Uploading…"
+            : phase === "processing"
+              ? "Processing…"
+              : "Submit update"}
         </button>
+
+        <SubmitProgress
+          phase={phase}
+          uploadFraction={uploadFraction}
+          uploadLoadedBytes={uploadLoaded}
+          uploadTotalBytes={uploadTotal}
+          errorMessage={submitError}
+        />
       </div>
 
       {comments.length > 0 && (
