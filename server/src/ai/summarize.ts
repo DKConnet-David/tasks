@@ -27,7 +27,10 @@ SHORT (for WhatsApp caption + Splynx comment text):
 - follow_ups: action items / billing notes / things needing attention. Empty string if none.
 
 STRUCTURED (drive the PDF report):
-- overview: an object with service_type, client_name, location, job_date, job_start_time, job_end_time, job_duration. Pull these from the task title / description / customer info in the prompt context, and from the photos when they show timestamps. Use empty string for any field you genuinely cannot determine — do not guess.
+- overview: an object with service_type, client_name, location, job_date, job_start_time, job_end_time, job_duration.
+  - service_type, client_name, location: pull from the task title / description / customer info.
+  - job_date: fine to pull from any source — Splynx's scheduled date is acceptable here, this is just calendar context.
+  - job_start_time, job_end_time, job_duration: STRICT RULE — fill these ONLY when the actual on-site times are explicitly readable from a photo (typically a job card / sign-off sheet showing something like "Start 09:20 / End 17:30 / Duration 8h 10min"). The Splynx **scheduled** time and Splynx-recorded **estimated duration** are NOT actual times — they describe what was planned, not what happened — and must NEVER be used to populate these three fields. If no photo shows the actual times, return empty strings ("") for all three. If a photographed job card and any other source disagree, the job card wins.
 - work_completed: an ARRAY of bullet-list items naming each major piece of work performed. 6–12 short items typically. Examples: "LiteBeam 5AC antenna installed and configured", "Speed testing performed and verified", "All equipment functioning properly".
 - photo_descriptions: an ARRAY with EXACTLY one item per photo, in upload order. Each item is a single sentence describing what the photo shows in detail — include specific numbers, equipment models, readings, or names visible in the image. Examples: "Network speed test showing 64.90 Mbps download, 27.10 Mbps upload", "EW300-PRO router packaging with serial number visible", "Outdoor antenna installation on pole mount". This array is also used to derive Splynx attachment filenames, so the first 5–8 words of each description should be informative.
 - materials: an ARRAY of equipment / materials used (one per item). Include model numbers and pricing where shown. Examples: "LiteBeam 5AC outdoor antenna (LBAC 23-FTUA)", "Reyee EW300-PRO router (R 500.00)", "Pole mounting hardware".
@@ -62,8 +65,8 @@ export async function summarize(args: SummarizeArgs): Promise<ExternalSummary> {
   const contextText = [
     `Task: ${args.task.title}`,
     `Site / address: ${args.task.address || "(not set)"}`,
-    `Scheduled: ${args.task.scheduled_from && args.task.scheduled_from !== "0000-00-00 00:00:00" ? args.task.scheduled_from : "(no date)"}`,
-    `Splynx-recorded duration: ${args.task.formatted_duration || "(not recorded)"}`,
+    `Scheduled (NOT the actual start time — do not copy into job_start_time): ${args.task.scheduled_from && args.task.scheduled_from !== "0000-00-00 00:00:00" ? args.task.scheduled_from : "(no date)"}`,
+    `Estimated duration in Splynx (NOT the actual duration — do not copy into job_duration): ${args.task.formatted_duration || "(not recorded)"}`,
     `Technician on site: ${args.techName}`,
     "",
     `Tech's notes (verbatim): ${args.comment.trim() || "(no notes provided)"}`,
@@ -165,5 +168,61 @@ export async function summarize(args: SummarizeArgs): Promise<ExternalSummary> {
     desc.replace(/^[^A-Za-z0-9]+/, "").slice(0, 60),
   );
 
+  // Defensive guard against the AI lifting Splynx scheduled values into
+  // the actual-time fields. Prompt should prevent this — the guard catches
+  // any drift or future regressions. See docs/plan for context.
+  scrubFabricatedTimes(parsed.overview, args.task);
+
   return parsed;
+}
+
+function scrubFabricatedTimes(
+  overview: ExternalSummary["overview"],
+  task: SummarizeArgs["task"],
+): void {
+  const scheduledHHMM = extractHHMM(task.scheduled_from);
+  if (
+    overview.job_start_time &&
+    scheduledHHMM &&
+    overview.job_start_time.replace(/\s/g, "") === scheduledHHMM
+  ) {
+    console.warn(
+      `[summarize] guard fired: job_start_time matched Splynx scheduled time (${scheduledHHMM}); blanking. Task ${task.id}.`,
+    );
+    overview.job_start_time = "";
+    // If start was just a copy of the scheduled time, end and duration are
+    // almost certainly invented from the same scheduled+formatted_duration
+    // pair. Blank both rather than leave a misleading orphan.
+    overview.job_end_time = "";
+    overview.job_duration = "";
+    return;
+  }
+  if (
+    overview.job_duration &&
+    task.formatted_duration &&
+    normaliseDuration(overview.job_duration) === normaliseDuration(task.formatted_duration)
+  ) {
+    console.warn(
+      `[summarize] guard fired: job_duration matched Splynx formatted_duration (${task.formatted_duration}); blanking. Task ${task.id}.`,
+    );
+    overview.job_duration = "";
+  }
+}
+
+function extractHHMM(splynxDateTime: string): string | null {
+  // Splynx stores datetimes as "YYYY-MM-DD HH:MM:SS"; "0000-00-00 00:00:00"
+  // means unset.
+  if (!splynxDateTime || splynxDateTime.startsWith("0000")) return null;
+  const match = splynxDateTime.match(/(\d{2}):(\d{2})/);
+  return match ? `${match[1]}:${match[2]}` : null;
+}
+
+function normaliseDuration(s: string): string {
+  // "1h" / "1 hour" / "1hour" all collapse to "1h" for comparison.
+  return s
+    .toLowerCase()
+    .replace(/\bhours?\b/g, "h")
+    .replace(/\bminutes?\b|\bmins?\b/g, "m")
+    .replace(/\s+/g, "")
+    .trim();
 }
