@@ -29,12 +29,11 @@ SHORT (for WhatsApp caption + Splynx comment text):
 STRUCTURED (drive the PDF report):
 - overview: an object with service_type, client_name, location, job_date, job_start_time, job_end_time, job_duration. Pull these from the task title / description / customer info in the prompt context, and from the photos when they show timestamps. Use empty string for any field you genuinely cannot determine — do not guess.
 - work_completed: an ARRAY of bullet-list items naming each major piece of work performed. 6–12 short items typically. Examples: "LiteBeam 5AC antenna installed and configured", "Speed testing performed and verified", "All equipment functioning properly".
-- photo_descriptions: an ARRAY with EXACTLY one item per photo, in upload order. Each item is a single sentence describing what the photo shows in detail — include specific numbers, equipment models, readings, or names visible in the image. Examples: "Network speed test showing 64.90 Mbps download, 27.10 Mbps upload", "EW300-PRO router packaging", "Outdoor antenna installation on pole mount".
+- photo_descriptions: an ARRAY with EXACTLY one item per photo, in upload order. Each item is a single sentence describing what the photo shows in detail — include specific numbers, equipment models, readings, or names visible in the image. Examples: "Network speed test showing 64.90 Mbps download, 27.10 Mbps upload", "EW300-PRO router packaging with serial number visible", "Outdoor antenna installation on pole mount". This array is also used to derive Splynx attachment filenames, so the first 5–8 words of each description should be informative.
 - materials: an ARRAY of equipment / materials used (one per item). Include model numbers and pricing where shown. Examples: "LiteBeam 5AC outdoor antenna (LBAC 23-FTUA)", "Reyee EW300-PRO router (R 500.00)", "Pole mounting hardware".
 - issues_notes: an ARRAY of any issues encountered, deviations, or notable observations. Examples: "Client not on site during completion", "Client told people on the yard where technician mounted router". Empty array if there's nothing remarkable.
 
-ALSO:
-- photo_captions: an ARRAY with EXACTLY one short (3–8 word) caption per photo, in upload order. These become the filenames in Splynx, so they should be informative and filename-friendly. Examples: "speed-test-result", "router-installed-and-powered", "outdoor-antenna-mounted". Avoid generic words like "photo".
+CRITICAL: photo_descriptions MUST contain exactly the same number of entries as the number of photos provided. Never short the array — if a photo is unclear, write what you can see ("Equipment closeup, content unclear") rather than skipping it.
 
 Reason from the photos and the tech's notes; the Splynx task description is supplementary context (it describes what was scheduled, not necessarily what happened).`;
 
@@ -75,9 +74,11 @@ export async function summarize(args: SummarizeArgs): Promise<ExternalSummary> {
     `Now produce the structured job completion summary using save_summary.`,
   ].join("\n");
 
+  // 30 photos × ~80 tokens of description each + the rest of the structured
+  // fields can run past 3k easily. 8192 is plenty without being wasteful.
   const response = await client.messages.create({
     model: args.config.CLAUDE_MODEL,
-    max_tokens: 3000,
+    max_tokens: 8192,
     system: SYSTEM_PROMPT,
     tools: [
       {
@@ -115,7 +116,6 @@ export async function summarize(args: SummarizeArgs): Promise<ExternalSummary> {
             photo_descriptions: { type: "array", items: { type: "string" } },
             materials: { type: "array", items: { type: "string" } },
             issues_notes: { type: "array", items: { type: "string" } },
-            photo_captions: { type: "array", items: { type: "string" } },
           },
           required: [
             "headline",
@@ -127,7 +127,6 @@ export async function summarize(args: SummarizeArgs): Promise<ExternalSummary> {
             "photo_descriptions",
             "materials",
             "issues_notes",
-            "photo_captions",
           ],
         },
       },
@@ -147,19 +146,24 @@ export async function summarize(args: SummarizeArgs): Promise<ExternalSummary> {
   }
   const parsed = ExternalSummarySchema.parse(toolUse.input);
 
-  // Defensive: pad/truncate the per-photo arrays so their length matches the
-  // photo count exactly. Claude usually gets this right but it's cheap to
-  // enforce — empty captions/descriptions cause filename + report glitches.
+  // Defensive: ensure photo_descriptions length exactly matches the photo
+  // count. Pad with a clearly-marked fallback so the operator can spot any
+  // truncation in the produced report rather than seeing silent gaps.
   const expected = args.photoBuffers.length;
-  parsed.photo_captions = padToLength(parsed.photo_captions, expected, (i) => `photo-${i + 1}`);
-  parsed.photo_descriptions = padToLength(parsed.photo_descriptions, expected, (i) => `Photo ${i + 1}`);
+  if (parsed.photo_descriptions.length !== expected) {
+    const fixed: string[] = [];
+    for (let i = 0; i < expected; i++) {
+      fixed.push(parsed.photo_descriptions[i] ?? `(no description generated for photo ${i + 1})`);
+    }
+    parsed.photo_descriptions = fixed;
+  }
+
+  // photo_captions is no longer asked from Claude — we derive it from
+  // photo_descriptions for backwards compatibility with code paths that
+  // still read .photo_captions.
+  parsed.photo_captions = parsed.photo_descriptions.map((desc) =>
+    desc.replace(/^[^A-Za-z0-9]+/, "").slice(0, 60),
+  );
 
   return parsed;
-}
-
-function padToLength(arr: string[], n: number, fallback: (i: number) => string): string[] {
-  if (arr.length === n) return arr;
-  const out: string[] = [];
-  for (let i = 0; i < n; i++) out.push(arr[i] ?? fallback(i));
-  return out;
 }

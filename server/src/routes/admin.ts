@@ -337,15 +337,21 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
       // Photos
       if (photos.length > 0) {
         try {
-          // Reuse the captions from the (possibly corrected) summary so the
-          // re-attached files share the same human-readable names as the
-          // first attempt.
+          // Reuse the descriptions from the (possibly corrected) summary so
+          // the re-attached filenames match the first attempt.
           const summaryJson = sub.corrected_summary_json ?? sub.summary_json;
-          const captions: string[] = (() => {
+          const descriptions: string[] = (() => {
             if (!summaryJson) return [];
-            const obj = safeParse(summaryJson) as { photo_captions?: unknown } | null;
+            const obj = safeParse(summaryJson) as
+              | { photo_descriptions?: unknown; photo_captions?: unknown }
+              | null;
+            const fromDescriptions = Array.isArray(obj?.photo_descriptions)
+              ? obj.photo_descriptions.filter((s): s is string => typeof s === "string")
+              : [];
+            if (fromDescriptions.length > 0) return fromDescriptions;
+            // Legacy fallback: very old rows may only have photo_captions.
             return Array.isArray(obj?.photo_captions)
-              ? (obj.photo_captions.filter((s): s is string => typeof s === "string"))
+              ? obj.photo_captions.filter((s): s is string => typeof s === "string")
               : [];
           })();
           const buffers = await Promise.all(
@@ -353,7 +359,7 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
               buffer: await fs.readFile(
                 photoPath(config.DATA_DIR, sub.task_id, sub.id, p.filename),
               ),
-              filename: filenameFor(i, captions[i]),
+              filename: filenameFor(i, descriptions[i]),
               mimetype: "image/jpeg",
             })),
           );
@@ -771,16 +777,22 @@ function safeParse(json: string): unknown {
   }
 }
 
-function filenameFor(index: number, caption: string | undefined): string {
+function filenameFor(index: number, description: string | undefined): string {
   const num = String(index + 1).padStart(2, "0");
-  const safe = (caption ?? "")
+  const cleanWords = (description ?? "")
     .toLowerCase()
     .normalize("NFKD")
-    .replace(/[^\p{Letter}\p{Number}\s-]/gu, "")
-    .replace(/\s+/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "")
-    .slice(0, 60);
-  return safe ? `${num}-${safe}.jpg` : `${num}-photo.jpg`;
+    .split(/\s+/)
+    .map((w) => w.replace(/[^\p{Letter}\p{Number}]/gu, ""))
+    .filter(Boolean);
+  const picked: string[] = [];
+  let len = 0;
+  for (const word of cleanWords) {
+    if (picked.length > 0 && len + word.length + 1 > 60) break;
+    picked.push(word);
+    len += word.length + (picked.length > 0 ? 1 : 0);
+  }
+  const slug = picked.join("-");
+  return slug ? `${num}-${slug}.jpg` : `${num}-photo.jpg`;
 }
 

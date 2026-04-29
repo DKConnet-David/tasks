@@ -187,13 +187,13 @@ export async function runSubmissionPipeline(args: PipelineArgs): Promise<Pipelin
   if (photoData.length > 0) {
     try {
       const splynx = getServiceSplynxClient(config);
-      const captions = summary.photo_captions ?? [];
+      const descriptions = summary.photo_descriptions ?? [];
       const result = await splynx.addTaskAttachments(
         taskId,
         splynxAdminId,
         photoData.map((p, i) => ({
           buffer: p.buffer,
-          filename: photoFilename(i, captions[i]),
+          filename: photoFilename(i, descriptions[i]),
           mimetype: "image/jpeg",
         })),
       );
@@ -271,21 +271,32 @@ export async function runSubmissionPipeline(args: PipelineArgs): Promise<Pipelin
 }
 
 /**
- * Build a Splynx attachment filename from the AI's photo caption.
- *   "Customer router before replacement" + idx 0 -> "01-customer-router-before-replacement.jpg"
- *   undefined caption + idx 4              -> "05-photo.jpg"
+ * Build a Splynx attachment filename from the AI's photo description.
+ * Picks whole words up to a 60-char budget so we never end mid-word.
+ *
+ *   "Network speed test showing 64.90 Mbps download" + idx 0
+ *     -> "01-network-speed-test-showing-6490-mbps-download.jpg"
+ *   undefined / empty + idx 4
+ *     -> "05-photo.jpg"
  */
-function photoFilename(index: number, caption: string | undefined): string {
+function photoFilename(index: number, description: string | undefined): string {
   const num = String(index + 1).padStart(2, "0");
-  const safe = (caption ?? "")
+  const cleanWords = (description ?? "")
     .toLowerCase()
     .normalize("NFKD")
-    .replace(/[^\p{Letter}\p{Number}\s-]/gu, "")
-    .replace(/\s+/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "")
-    .slice(0, 60);
-  return safe ? `${num}-${safe}.jpg` : `${num}-photo.jpg`;
+    .split(/\s+/)
+    .map((w) => w.replace(/[^\p{Letter}\p{Number}]/gu, ""))
+    .filter(Boolean);
+
+  const picked: string[] = [];
+  let len = 0;
+  for (const word of cleanWords) {
+    if (picked.length > 0 && len + word.length + 1 > 60) break;
+    picked.push(word);
+    len += word.length + (picked.length > 0 ? 1 : 0);
+  }
+  const slug = picked.join("-");
+  return slug ? `${num}-${slug}.jpg` : `${num}-photo.jpg`;
 }
 
 function persistRating(

@@ -118,6 +118,15 @@ export async function generatePdf(args: GeneratePdfArgs): Promise<Buffer> {
       doc.fillColor(HEADING_COLOR);
     }
 
+    // 6. Photos — embedded grid. Always start a fresh page so the report's
+    // text portion stays cleanly readable.
+    if (args.photos.length > 0) {
+      doc.addPage();
+      doc.font("Helvetica-Bold").fontSize(13).fillColor(HEADING_COLOR).text("6. Photos");
+      doc.moveDown(0.4);
+      drawPhotoGrid(doc, args);
+    }
+
     // Footer
     const footerY = doc.page.height - 40;
     doc
@@ -139,6 +148,67 @@ export async function generatePdf(args: GeneratePdfArgs): Promise<Buffer> {
 
     doc.end();
   });
+}
+
+function drawPhotoGrid(doc: PDFKit.PDFDocument, args: GeneratePdfArgs): void {
+  const m = 50;
+  const gap = 8;
+  const labelHeight = 12;
+  const cols = 2;
+  const rowsPerPage = 3; // 6 photos per page
+  const pageW = doc.page.width;
+  const pageH = doc.page.height;
+  const colWidth = (pageW - m * 2 - gap * (cols - 1)) / cols;
+  // Aim for 3 rows per page including labels — back into per-cell height.
+  const cellHeight = (pageH - m * 2 - 30 - gap * (rowsPerPage - 1)) / rowsPerPage;
+  const imgHeight = cellHeight - labelHeight - 4;
+
+  let col = 0;
+  let row = 0;
+  let baseY = doc.y;
+
+  for (let i = 0; i < args.photos.length; i++) {
+    const photo = args.photos[i]!;
+    const x = m + col * (colWidth + gap);
+    const y = baseY + row * (cellHeight + gap);
+
+    // Centre the image in its cell while preserving aspect ratio.
+    try {
+      doc.image(photo.buffer, x, y, {
+        fit: [colWidth, imgHeight],
+        align: "center",
+        valign: "center",
+      });
+    } catch {
+      doc.rect(x, y, colWidth, imgHeight).stroke("#cccccc");
+      doc.fillColor("#999").fontSize(9).text("(unreadable)", x + 4, y + 4);
+      doc.fillColor(HEADING_COLOR);
+    }
+
+    // Label = "Photo N" referencing the description in section 3.
+    doc
+      .font("Helvetica-Bold")
+      .fontSize(9)
+      .fillColor(HEADING_COLOR)
+      .text(`Photo ${i + 1}`, x, y + imgHeight + 2, {
+        width: colWidth,
+        align: "center",
+        lineBreak: false,
+      });
+
+    col += 1;
+    if (col >= cols) {
+      col = 0;
+      row += 1;
+      if (row >= rowsPerPage && i < args.photos.length - 1) {
+        doc.addPage();
+        doc.font("Helvetica-Bold").fontSize(13).fillColor(HEADING_COLOR).text("6. Photos (cont.)");
+        doc.moveDown(0.4);
+        baseY = doc.y;
+        row = 0;
+      }
+    }
+  }
 }
 
 // ---------- layout helpers ----------
