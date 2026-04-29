@@ -4,6 +4,11 @@ export class ApiError extends Error {
   }
 }
 
+// All requests prefix with /api — server-side, nginx routes /api/* to the
+// backend container; the frontend /admin, /tasks/:id, /login routes belong
+// to React Router and are served by the SPA's index.html fallback.
+const API_PREFIX = "/api";
+
 async function request<T>(
   path: string,
   init?: RequestInit & { json?: unknown },
@@ -14,7 +19,8 @@ async function request<T>(
     headers.set("content-type", "application/json");
     body = JSON.stringify(init.json);
   }
-  const res = await fetch(path, {
+  const url = path.startsWith("/api/") ? path : `${API_PREFIX}${path}`;
+  const res = await fetch(url, {
     ...init,
     body,
     headers,

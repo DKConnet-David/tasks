@@ -27,10 +27,18 @@ async function main() {
 
   app.get("/health", async () => ({ ok: true }));
 
-  await registerAuthRoutes(app, config);
-
-  // Tasks, admin, and whatsapp routes are registered as they are implemented.
-  // See server/src/routes/{tasks,admin,whatsapp}.ts.
+  // All API routes live under /api/* to keep them clear of frontend SPA paths
+  // like /admin which the React Router also owns. nginx in the web container
+  // proxies /api/* and /health to this server; everything else falls through
+  // to the SPA index.html.
+  await app.register(
+    async (api) => {
+      await registerAuthRoutes(api, config);
+      // Tasks, admin, and whatsapp routes are registered here as they are
+      // implemented. See server/src/routes/{tasks,admin,whatsapp}.ts.
+    },
+    { prefix: "/api" },
+  );
 
   app.listen({ port: config.PORT, host: config.HOST }, (err, address) => {
     if (err) {
