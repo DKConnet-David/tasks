@@ -17,7 +17,7 @@ export function TaskLookup() {
   return (
     <div className="container stack">
       <div className="row" style={{ justifyContent: "space-between" }}>
-        <strong>{me?.splynx_login}</strong>
+        <strong>{me?.app_login}</strong>
         <div className="row" style={{ gap: "0.5rem" }}>
           {me?.is_admin ? <Link to="/admin">Admin</Link> : null}
           <button className="secondary" onClick={() => logout()}>Sign out</button>

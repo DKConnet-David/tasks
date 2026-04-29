@@ -17,15 +17,17 @@ export function getDb(dataDir: string): Database.Database {
 
 function migrate(d: Database.Database): void {
   d.exec(`
+    -- App-only auth: each session is created on a successful local login
+    -- (admin password check today, tech-table password check later). The
+    -- splynx_admin_id is the Splynx admin row whose name we attribute
+    -- comments to when this session writes back to Splynx.
     CREATE TABLE IF NOT EXISTS sessions (
       id TEXT PRIMARY KEY,
-      splynx_user_id INTEGER NOT NULL,
-      splynx_login TEXT NOT NULL,
-      access_token TEXT NOT NULL,
-      refresh_token TEXT NOT NULL,
-      expires_at INTEGER NOT NULL,
+      app_login TEXT NOT NULL,
+      splynx_admin_id INTEGER NOT NULL,
       is_admin INTEGER NOT NULL DEFAULT 0,
-      created_at INTEGER NOT NULL
+      created_at INTEGER NOT NULL,
+      expires_at INTEGER NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS submissions (

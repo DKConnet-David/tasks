@@ -45,7 +45,7 @@ export const api = {
 };
 
 export interface Me {
-  splynx_login: string;
-  splynx_user_id: number;
+  app_login: string;
+  splynx_admin_id: number;
   is_admin: boolean;
 }

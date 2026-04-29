@@ -15,7 +15,7 @@ export function AdminLayout() {
           </nav>
         </div>
         <div className="row" style={{ gap: "0.5rem" }}>
-          <span className="muted">{me?.splynx_login}</span>
+          <span className="muted">{me?.app_login}</span>
           <Link to="/">Tech view</Link>
           <button className="secondary" onClick={() => logout()}>Sign out</button>
         </div>

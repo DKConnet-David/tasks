@@ -6,7 +6,11 @@ const ConfigSchema = z.object({
   NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
 
   SPLYNX_BASE_URL: z.string().url(),
+  SPLYNX_API_KEY: z.string().min(1).optional(),
+  SPLYNX_API_SECRET: z.string().min(1).optional(),
+
   ADMIN_LOGIN: z.string().min(1),
+  ADMIN_PASSWORD: z.string().min(8, "ADMIN_PASSWORD must be at least 8 chars"),
 
   ANTHROPIC_API_KEY: z.string().min(1),
   CLAUDE_MODEL: z.string().default("claude-sonnet-4-6"),

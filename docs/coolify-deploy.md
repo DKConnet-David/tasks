@@ -27,6 +27,7 @@ the repo):
 | `SPLYNX_API_KEY` | _your Splynx API key_ |
 | `SPLYNX_API_SECRET` | _your Splynx API secret_ |
 | `ADMIN_LOGIN` | `david` |
+| `ADMIN_PASSWORD` | _your chosen admin password (min 8 chars)_ |
 | `ANTHROPIC_API_KEY` | _your Anthropic key_ |
 | `CLAUDE_MODEL` | `claude-sonnet-4-6` |
 | `WHATSAPP_GROUP_JID` | _leave blank for now — set after QR onboarding_ |

@@ -52,12 +52,11 @@ export interface SplynxTask {
 
 export interface SessionData {
   id: string;
-  splynx_user_id: number;
-  splynx_login: string;
-  access_token: string;
-  refresh_token: string;
-  expires_at: number;
+  app_login: string;
+  splynx_admin_id: number;
   is_admin: boolean;
+  created_at: number;
+  expires_at: number;
 }
 
 export type SubmissionStatus = "success" | "partial" | "failed";
