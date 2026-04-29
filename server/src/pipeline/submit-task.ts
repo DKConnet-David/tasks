@@ -7,6 +7,7 @@ import type { SplynxTaskRaw } from "../splynx/types.js";
 import { getServiceSplynxClient } from "../splynx/service-client.js";
 import { summarize } from "../ai/summarize.js";
 import { generatePdf } from "../pdf/generate.js";
+import { pipelineSendDocument } from "../routes/whatsapp.js";
 import type { ExternalSummary } from "../types.js";
 
 interface PhotoForPipeline {
@@ -23,6 +24,7 @@ export interface PipelineResult {
   splynxCommentId: number | null;
   splynxAttachmentIds: number[];
   pdfPath: string | null;
+  whatsappMessageId: string | null;
   errors: string[];
 }
 
@@ -60,6 +62,7 @@ export async function runSubmissionPipeline(args: PipelineArgs): Promise<Pipelin
   let summary: ExternalSummary | null = null;
   let pdfPath: string | null = null;
   let splynxCommentId: number | null = null;
+  let whatsappMessageId: string | null = null;
   const splynxAttachmentIds: number[] = [];
 
   // Load processed photo bytes from the local archive (Phase B saved them).
@@ -102,6 +105,7 @@ export async function runSubmissionPipeline(args: PipelineArgs): Promise<Pipelin
       splynxCommentId: null,
       splynxAttachmentIds: [],
       pdfPath: null,
+      whatsappMessageId: null,
       errors,
     };
   }
@@ -193,12 +197,73 @@ export async function runSubmissionPipeline(args: PipelineArgs): Promise<Pipelin
     }
   }
 
+  // ---- 5. WhatsApp: send caption + PDF to the configured group ----
+  if (pdfBuffer && summary) {
+    try {
+      const caption = formatWhatsAppCaption(summary, task, appLogin);
+      const fileName = `task-${taskId}-submission-${submissionId}.pdf`;
+      const result = await pipelineSendDocument({
+        config,
+        caption,
+        pdfBuffer,
+        fileName,
+      });
+      if (!result) {
+        log.info({ submissionId }, "WhatsApp send skipped — no group configured");
+        // Not an error — group selection is optional.
+      } else {
+        whatsappMessageId = result.messageId;
+        if (whatsappMessageId) {
+          db.prepare(
+            `UPDATE submissions SET wa_message_id = ?, updated_at = ? WHERE id = ?`,
+          ).run(whatsappMessageId, Date.now(), submissionId);
+        }
+        log.info({ submissionId, jid: result.jid, whatsappMessageId }, "WhatsApp sent");
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log.error({ err }, "WhatsApp send failed");
+      errors.push(`WhatsApp send failed: ${msg}`);
+    }
+  }
+
   const status: PipelineResult["status"] = errors.length === 0 ? "success" : "partial";
   db.prepare(
     `UPDATE submissions SET status = ?, error = ?, updated_at = ? WHERE id = ?`,
   ).run(status, errors.length ? errors.join("\n") : null, Date.now(), submissionId);
 
-  return { status, summary, splynxCommentId, splynxAttachmentIds, pdfPath, errors };
+  return {
+    status,
+    summary,
+    splynxCommentId,
+    splynxAttachmentIds,
+    pdfPath,
+    whatsappMessageId,
+    errors,
+  };
+}
+
+function formatWhatsAppCaption(
+  summary: ExternalSummary,
+  task: { id: number; title: string; address: string },
+  techName: string,
+): string {
+  // WhatsApp supports limited markdown: *bold*, _italic_, ~strike~, ```mono```.
+  const lines: string[] = [];
+  lines.push(`*${summary.headline}*`);
+  if (task.address) lines.push(`📍 ${task.address}`);
+  lines.push(`Task #${task.id}  •  ${techName}`);
+  lines.push("");
+  lines.push(summary.what_was_done);
+  if (summary.observations.trim()) {
+    lines.push("");
+    lines.push(`*Observations:* ${summary.observations}`);
+  }
+  if (summary.follow_ups.trim()) {
+    lines.push("");
+    lines.push(`*Follow-ups:* ${summary.follow_ups}`);
+  }
+  return lines.join("\n");
 }
 
 function formatSplynxComment(summary: ExternalSummary, techName: string): string {

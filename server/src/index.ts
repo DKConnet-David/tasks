@@ -5,6 +5,8 @@ import { loadConfig } from "./config.js";
 import { getDb } from "./db.js";
 import { registerAuthRoutes } from "./routes/auth.js";
 import { registerTaskRoutes } from "./routes/tasks.js";
+import { registerWhatsAppRoutes } from "./routes/whatsapp.js";
+import { start as startBaileys } from "./whatsapp/baileys.js";
 
 async function main() {
   const config = loadConfig();
@@ -40,11 +42,19 @@ async function main() {
     async (api) => {
       await registerAuthRoutes(api, config);
       await registerTaskRoutes(api, config);
-      // Admin and whatsapp routes are registered here as they are
-      // implemented. See server/src/routes/{admin,whatsapp}.ts.
+      await registerWhatsAppRoutes(api, config);
+      // Admin (submissions list/detail/edit) routes land in Phase D.
     },
     { prefix: "/api" },
   );
+
+  // Auto-start Baileys in the background. If creds are already saved on the
+  // data volume we'll re-handshake cleanly; otherwise the QR shows up on the
+  // /admin/whatsapp page when the admin opens it. Failure here doesn't
+  // prevent the api from starting.
+  startBaileys(config.DATA_DIR).catch((err) => {
+    app.log.error({ err }, "baileys start failed (continuing without WhatsApp)");
+  });
 
   app.listen({ port: config.PORT, host: config.HOST }, (err, address) => {
     if (err) {

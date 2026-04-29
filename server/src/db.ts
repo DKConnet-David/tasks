@@ -99,6 +99,15 @@ function migrate(d: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_ratings_reviewed
       ON submission_ratings(reviewed_at DESC)
       WHERE admin_score IS NOT NULL;
+
+    -- Mutable settings — currently used for the WhatsApp target group JID
+    -- (set from the admin UI after onboarding) so we don't need an env-var
+    -- redeploy when techs change destinations.
+    CREATE TABLE IF NOT EXISTS settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
   `);
 
   // Idempotent column renames for databases created with the older schema
