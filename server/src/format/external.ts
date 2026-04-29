@@ -16,12 +16,12 @@ interface TaskSubset {
 }
 
 /**
- * Build the URL of a task in the Splynx admin UI. Splynx (modern versions)
- * runs as a hash-routed SPA so the path is `/admin#scheduling/tasks/{id}`.
- * If your tenant uses a different pattern, adjust this single function.
+ * Build the URL of a task in the Splynx admin UI.
+ * Verified against clientzone.dkconnect.co.za 2026-04-29:
+ *   /admin/scheduling/tasks/view?id=<id>
  */
 export function splynxTaskUrl(splynxBaseUrl: string, taskId: number): string {
-  return `${splynxBaseUrl.replace(/\/+$/, "")}/admin#scheduling/tasks/${taskId}`;
+  return `${splynxBaseUrl.replace(/\/+$/, "")}/admin/scheduling/tasks/view?id=${taskId}`;
 }
 
 export function formatSplynxComment(
