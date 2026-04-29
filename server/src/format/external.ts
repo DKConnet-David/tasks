@@ -35,6 +35,15 @@ export function formatSplynxComment(
   }
   parts.push(`<strong>${escapeHtml(summary.headline)}</strong>`);
   parts.push(`<br><em>Submitted by ${escapeHtml(techName)} via Task Updater</em>`);
+
+  const overviewItems = overviewLines(summary.overview);
+  if (overviewItems.length > 0) {
+    parts.push("<br><br><strong>Job/Task Overview</strong>");
+    for (const [label, value] of overviewItems) {
+      parts.push(`<br>• <strong>${escapeHtml(label)}:</strong> ${escapeHtml(value)}`);
+    }
+  }
+
   parts.push("<br><br>");
   parts.push(`<strong>What was done</strong><br>${nl2br(escapeHtml(summary.what_was_done))}`);
   if (summary.observations.trim()) {
@@ -49,9 +58,10 @@ export function formatSplynxComment(
 }
 
 /**
- * Short WhatsApp caption: headline, location, tech, and a link to the task
- * in Splynx. The attached PDF carries the full report — keep this brief so
- * the message is glanceable in the group feed.
+ * WhatsApp caption: headline, the same Job/Task Overview that opens the
+ * PDF, and a link straight to the task in Splynx. The attached PDF still
+ * carries the full report (work completed / photos analysis / materials /
+ * issues+notes), but this gives the group enough overview at a glance.
  */
 export function formatWhatsAppCaption(
   summary: ExternalSummary,
@@ -61,11 +71,45 @@ export function formatWhatsAppCaption(
 ): string {
   const lines: string[] = [];
   lines.push(`*${summary.headline}*`);
-  if (task.address) lines.push(`📍 ${task.address}`);
-  lines.push(`Task #${task.id}  •  ${techName}`);
+
+  const overviewItems = overviewLines(summary.overview);
+  if (overviewItems.length > 0) {
+    lines.push("");
+    lines.push("*Job/Task Overview*");
+    for (const [label, value] of overviewItems) {
+      lines.push(`• ${label}: ${value}`);
+    }
+  } else if (task.address) {
+    // Fallback for legacy summaries with no overview.
+    lines.push(`📍 ${task.address}`);
+    lines.push(`Task #${task.id}  •  ${techName}`);
+  }
+
   lines.push("");
   lines.push(`🔗 ${splynxTaskUrl(splynxBaseUrl, task.id)}`);
   return lines.join("\n");
+}
+
+/**
+ * Build the Job/Task Overview bullet list shared between the Splynx comment
+ * and the WhatsApp caption. Empty fields are skipped, so legacy submissions
+ * (where the AI didn't fill the overview) just get an empty list back.
+ */
+function overviewLines(
+  overview: ExternalSummary["overview"],
+): [label: string, value: string][] {
+  const out: [string, string][] = [];
+  const push = (label: string, value: string | undefined) => {
+    if (value && value.trim()) out.push([label, value.trim()]);
+  };
+  push("Service type", overview.service_type);
+  push("Client", overview.client_name);
+  push("Location", overview.location);
+  push("Date", overview.job_date);
+  push("Job Start Time", overview.job_start_time);
+  push("Job End Time", overview.job_end_time);
+  push("Job Duration", overview.job_duration);
+  return out;
 }
 
 function escapeHtml(s: string): string {
