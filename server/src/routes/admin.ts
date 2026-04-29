@@ -13,6 +13,7 @@ import { pipelineSendDocument } from "./whatsapp.js";
 import { photoPath, processAndSavePhoto, type SourcePhoto } from "../photos/store.js";
 import { runSubmissionPipeline } from "../pipeline/submit-task.js";
 import { formatSplynxComment, formatWhatsAppCaption } from "../format/external.js";
+import { createTech, listTechs, updateTech } from "../lib/techs.js";
 
 const ListQuery = z.object({
   status: z.enum(["pending", "success", "partial", "failed"]).optional(),
@@ -547,6 +548,68 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
       splynx_comment_id: result.splynxCommentId,
       errors: result.errors,
     });
+  });
+
+  // ---------- TECH PROVISIONING ----------
+  app.get("/admin/techs", { preHandler: requireAdmin }, async () => {
+    return { techs: listTechs(db) };
+  });
+
+  const TechCreateSchema = z.object({
+    login: z.string().min(1).max(64).regex(/^[a-zA-Z0-9._-]+$/, "letters, digits, . _ - only"),
+    password: z.string().min(8).max(256),
+    splynx_admin_id: z.coerce.number().int().positive(),
+    display_name: z.string().min(1).max(120),
+  });
+
+  app.post("/admin/techs", { preHandler: requireAdmin }, async (req, reply) => {
+    const parsed = TechCreateSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "invalid_body", issues: parsed.error.issues });
+    }
+    if (parsed.data.login === config.ADMIN_LOGIN) {
+      return reply.code(400).send({
+        error: "login_conflict",
+        message: "That login is reserved for the admin account.",
+      });
+    }
+    try {
+      const id = await createTech(db, parsed.data);
+      return reply.code(201).send({ id });
+    } catch (err) {
+      const e = err as { code?: string; message?: string };
+      if (e.code === "SQLITE_CONSTRAINT_UNIQUE") {
+        return reply.code(409).send({ error: "login_taken" });
+      }
+      throw err;
+    }
+  });
+
+  const TechPatchSchema = z.object({
+    password: z.string().min(8).max(256).optional(),
+    splynx_admin_id: z.coerce.number().int().positive().optional(),
+    display_name: z.string().min(1).max(120).optional(),
+    is_active: z.boolean().optional(),
+  });
+
+  app.patch("/admin/techs/:id", { preHandler: requireAdmin }, async (req, reply) => {
+    const id = parseId((req.params as { id: string }).id);
+    if (id === null) return reply.code(400).send({ error: "invalid_id" });
+    const parsed = TechPatchSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "invalid_body", issues: parsed.error.issues });
+    }
+    await updateTech(db, id, parsed.data);
+    return { ok: true };
+  });
+
+  app.delete("/admin/techs/:id", { preHandler: requireAdmin }, async (req, reply) => {
+    const id = parseId((req.params as { id: string }).id);
+    if (id === null) return reply.code(400).send({ error: "invalid_id" });
+    // Soft delete — submissions reference app_login as a denormalised string,
+    // so a hard delete would lose the audit link.
+    await updateTech(db, id, { is_active: false });
+    return { ok: true };
   });
 
   // ---------- RATING (admin-only, internal-only) ----------

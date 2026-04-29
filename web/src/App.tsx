@@ -9,6 +9,7 @@ import { SubmissionsList } from "./pages/admin/SubmissionsList";
 import { SubmissionDetail } from "./pages/admin/SubmissionDetail";
 import { ManualSubmit } from "./pages/admin/ManualSubmit";
 import { WhatsAppPanel } from "./pages/admin/WhatsAppPanel";
+import { TechsPage } from "./pages/admin/TechsPage";
 
 export function App() {
   return (
@@ -25,6 +26,7 @@ export function App() {
           <Route path="submissions/:id" element={<SubmissionDetail />} />
           <Route path="manual" element={<ManualSubmit />} />
           <Route path="whatsapp" element={<WhatsAppPanel />} />
+          <Route path="techs" element={<TechsPage />} />
         </Route>
 
         <Route path="*" element={<Navigate to="/" replace />} />

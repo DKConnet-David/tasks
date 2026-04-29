@@ -108,6 +108,21 @@ function migrate(d: Database.Database): void {
       value TEXT NOT NULL,
       updated_at INTEGER NOT NULL
     );
+
+    -- App-managed tech accounts. Admin provisions these via /admin/techs.
+    -- splynx_admin_id maps the app user to a Splynx admin row so the comment
+    -- the pipeline posts is attributed to the right name in Splynx.
+    CREATE TABLE IF NOT EXISTS techs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      login TEXT NOT NULL UNIQUE,
+      password_hash TEXT NOT NULL,
+      splynx_admin_id INTEGER NOT NULL,
+      display_name TEXT NOT NULL,
+      is_active INTEGER NOT NULL DEFAULT 1,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_techs_login ON techs(login);
   `);
 
   // Idempotent column renames for databases created with the older schema

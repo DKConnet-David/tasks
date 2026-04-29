@@ -11,6 +11,7 @@ const ConfigSchema = z.object({
 
   ADMIN_LOGIN: z.string().min(1),
   ADMIN_PASSWORD: z.string().min(8, "ADMIN_PASSWORD must be at least 8 chars"),
+  ADMIN_SPLYNX_ADMIN_ID: z.coerce.number().int().positive().default(1),
 
   ANTHROPIC_API_KEY: z.string().min(1),
   CLAUDE_MODEL: z.string().default("claude-sonnet-4-6"),

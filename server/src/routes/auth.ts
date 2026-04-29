@@ -4,21 +4,19 @@ import { z } from "zod";
 import { createSession, destroySession, loadSession, sessionCookieName } from "../lib/session.js";
 import type { AppConfig } from "../config.js";
 import { getDb } from "../db.js";
+import { findTechByLogin, verifyPassword, dummyVerify } from "../lib/techs.js";
 
 /**
  * App-only auth.
  *
- * Today we support a single admin login (`ADMIN_LOGIN` + `ADMIN_PASSWORD`
- * env vars). Tech provisioning will land in a follow-up phase as a `techs`
- * table with bcrypt-hashed passwords. The session model is already shaped
- * for that: `splynx_admin_id` per session lets writebacks to Splynx be
- * attributed to the right Splynx admin name.
+ * Order of precedence:
+ *   1. ADMIN_LOGIN + ADMIN_PASSWORD (env-driven, single admin).
+ *   2. techs table (admin-provisioned, bcrypt-hashed password).
  *
- * The admin's `splynx_admin_id` is hardcoded to 1 (David, observed in the
- * probe) — change here if your David is a different admin row.
+ * Total response time is dominated by bcrypt.compare(~100ms). To prevent a
+ * timing oracle that distinguishes "unknown login" from "wrong password",
+ * we always run a bcrypt compare even when the login isn't found.
  */
-
-const ADMIN_SPLYNX_ADMIN_ID = 1;
 
 const LoginSchema = z.object({
   login: z.string().min(1).max(64),
@@ -26,8 +24,6 @@ const LoginSchema = z.object({
 });
 
 function constantTimeStringEqual(a: string, b: string): boolean {
-  // SHA-256 both sides so timingSafeEqual gets equal-length buffers and the
-  // length of the secret isn't revealed by short-circuit comparisons.
   const ha = crypto.createHash("sha256").update(a).digest();
   const hb = crypto.createHash("sha256").update(b).digest();
   return crypto.timingSafeEqual(ha, hb);
@@ -41,29 +37,57 @@ export async function registerAuthRoutes(app: FastifyInstance, config: AppConfig
     if (!parsed.success) return reply.code(400).send({ error: "invalid_body" });
     const { login, password } = parsed.data;
 
-    const loginOk = constantTimeStringEqual(login, config.ADMIN_LOGIN);
-    const passwordOk = constantTimeStringEqual(password, config.ADMIN_PASSWORD);
-    if (!loginOk || !passwordOk) {
-      // Tiny artificial delay so timing differences from the lookup don't
-      // distinguish wrong-login from wrong-password to a casual observer.
-      await new Promise((r) => setTimeout(r, 50));
+    let session: {
+      app_login: string;
+      splynx_admin_id: number;
+      is_admin: boolean;
+    } | null = null;
+
+    // Path 1: admin login.
+    if (
+      constantTimeStringEqual(login, config.ADMIN_LOGIN) &&
+      constantTimeStringEqual(password, config.ADMIN_PASSWORD)
+    ) {
+      session = {
+        app_login: config.ADMIN_LOGIN,
+        splynx_admin_id: config.ADMIN_SPLYNX_ADMIN_ID,
+        is_admin: true,
+      };
+      // Still run a dummy bcrypt so admin login takes ~the same time as a
+      // tech login, removing the time-based admin-vs-tech distinguisher.
+      await dummyVerify(password);
+    } else {
+      // Path 2: tech login.
+      const tech = findTechByLogin(db, login);
+      if (tech && tech.is_active === 1) {
+        const ok = await verifyPassword(password, tech.password_hash);
+        if (ok) {
+          session = {
+            app_login: tech.login,
+            splynx_admin_id: tech.splynx_admin_id,
+            is_admin: false,
+          };
+        }
+      } else {
+        // Login doesn't exist or is inactive — run a dummy compare to keep
+        // timing similar to a real bcrypt path.
+        await dummyVerify(password);
+      }
+    }
+
+    if (!session) {
       return reply.code(401).send({ error: "invalid_credentials" });
     }
 
     const sessionId = createSession(db, {
-      app_login: config.ADMIN_LOGIN,
-      splynx_admin_id: ADMIN_SPLYNX_ADMIN_ID,
-      is_admin: true,
+      app_login: session.app_login,
+      splynx_admin_id: session.splynx_admin_id,
+      is_admin: session.is_admin,
       ttlSeconds: config.SESSION_TTL_SECONDS,
     });
 
     reply.setCookie(sessionCookieName, sessionId, {
       httpOnly: true,
-      // Secure flag is request-driven, not environment-driven: a Secure cookie
-      // is silently dropped by the browser on plain HTTP, so a hard-coded
-      // `secure: NODE_ENV==='production'` would break the deploy on Coolify
-      // hosts that haven't been SSL-bound yet. Once a domain with HTTPS is
-      // bound, this auto-tightens.
       secure: req.protocol === "https",
       sameSite: "lax",
       path: "/",
