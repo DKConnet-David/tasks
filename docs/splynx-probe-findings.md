@@ -27,24 +27,27 @@ _Probe date: 2026-04-29._
 
 **Comment shape:** `{id, task_id, user_id, comment, created_at, files[], pinned_datetime, is_edited, is_pinned, admin_name}`.
 
-The `files[]` array on a comment can hold attachments, but **we have not yet found the endpoint that puts files into it on this Splynx version.** None of the following worked:
+## File attachments (resolved 2026-04-29)
 
-| Path | Result |
+Resolved via the v2.0 OpenAPI spec at
+[api-doc.splynx.com/release-5.2.json](https://api-doc.splynx.com/release-5.2.json).
+
+| Endpoint | What it does |
 |---|---|
-| `POST /api/2.0/admin/scheduling/tasks-files` | 404 |
-| `POST /api/2.0/admin/scheduling/tasks/{id}/files` | 404 |
-| `POST /api/2.0/admin/scheduling/tasks-comments-files` | 404 |
-| `POST /api/2.0/admin/scheduling/tasks-comments/{id}/files` | 404 |
-| `POST /api/2.0/admin/scheduling/tasks-comments` (multipart with `file`) | 201 but `files[]` stays empty |
-| `POST /api/2.0/admin/files/files` | 404 |
-| `POST /api/2.0/admin/uploads` | 500 |
+| `POST /api/2.0/admin/scheduling/tasks-attachments` | Multipart with `task_id`, `user_id`, `files[]`. Lands in the task's **Attachments** tab. |
+| `POST /api/2.0/admin/scheduling/tasks-comments` | Multipart with `task_id`, `user_id`, `comment`, `files[]` — comment + attachments in one call. |
+| `POST /api/2.0/admin/scheduling/tasks-comments/{id}--upload` | Multipart `files[]` to add files to an existing comment. |
+| `PUT /api/2.0/admin/scheduling/tasks-comments/{id}` | JSON `{comment}` — edits a comment in place (no need for "[Updated by admin]" append workaround). |
+| `DELETE /api/2.0/admin/scheduling/tasks-comments/{id}` | Permission-locked for our API key (403). Cleanup must be manual. |
 
-**Decision:** the app does not depend on Splynx file attachments. Photos + the
-generated PDF are stored in our own backend (data volume) and the Splynx
-comment links to a public viewer URL (`https://taskupdater.<domain>/r/<token>`).
-This was a planned fallback in the design and is now the chosen path. If we
-later discover the correct file-upload endpoint, swap the link for a real
-attachment.
+**Why our earlier probe failed:** we used `file` (singular) as the multipart
+field name. The spec wants `files[]` — plural array convention. Once that
+was fixed, both `tasks-attachments` and `tasks-comments` (with files in the
+same call) returned 201 with proper file records.
+
+The submit pipeline now posts the AI summary as a comment **with the
+generated PDF attached in the same call**, and the photos as direct task
+attachments. No "viewer link" fallback needed.
 
 ## Test comments left on the live tenant
 

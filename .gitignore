@@ -20,6 +20,7 @@ splynx-probe.json
 splynx-files-probe.json
 server/splynx-probe.json
 server/splynx-files-probe.json
+server/splynx-spec.json
 
 # TypeScript build cache
 *.tsbuildinfo
