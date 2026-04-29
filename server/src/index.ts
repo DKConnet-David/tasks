@@ -15,6 +15,10 @@ async function main() {
       level: config.NODE_ENV === "production" ? "info" : "debug",
     },
     bodyLimit: 50 * 1024 * 1024,
+    // We sit behind nginx (in the web container) which forwards the
+    // X-Forwarded-Proto header. Trusting it lets req.protocol reflect the
+    // real client-side scheme so we set Secure cookies on HTTPS only.
+    trustProxy: true,
   });
 
   await app.register(cookie, { secret: config.SESSION_SECRET });

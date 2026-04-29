@@ -59,7 +59,12 @@ export async function registerAuthRoutes(app: FastifyInstance, config: AppConfig
 
     reply.setCookie(sessionCookieName, sessionId, {
       httpOnly: true,
-      secure: config.NODE_ENV === "production",
+      // Secure flag is request-driven, not environment-driven: a Secure cookie
+      // is silently dropped by the browser on plain HTTP, so a hard-coded
+      // `secure: NODE_ENV==='production'` would break the deploy on Coolify
+      // hosts that haven't been SSL-bound yet. Once a domain with HTTPS is
+      // bound, this auto-tightens.
+      secure: req.protocol === "https",
       sameSite: "lax",
       path: "/",
       maxAge: config.SESSION_TTL_SECONDS,
