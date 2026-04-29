@@ -9,6 +9,8 @@ interface GeneratePdfArgs {
   photos: { buffer: Buffer; width: number; height: number }[];
   techName: string;
   submittedAt: Date;
+  /** Per-photo captions in the same order as `photos`. Optional. */
+  photoCaptions?: string[];
 }
 
 /**
@@ -104,6 +106,7 @@ export async function generatePdf(args: GeneratePdfArgs): Promise<Buffer> {
 
       const margin = 50;
       const gap = 8;
+      const captionHeight = 14; // line of caption text under each image
       const pageW = doc.page.width;
       const pageH = doc.page.height;
       const colWidth = (pageW - margin * 2 - gap) / 2;
@@ -112,13 +115,16 @@ export async function generatePdf(args: GeneratePdfArgs): Promise<Buffer> {
       let rowY = doc.y;
       let rowH = 0;
 
-      for (const photo of args.photos) {
+      for (let i = 0; i < args.photos.length; i++) {
+        const photo = args.photos[i]!;
+        const caption = args.photoCaptions?.[i] ?? "";
         const aspect = photo.width / photo.height || 1;
-        const w = colWidth;
-        const h = w / aspect;
+        const imgW = colWidth;
+        const imgH = imgW / aspect;
+        const cellH = imgH + (caption ? captionHeight : 0);
 
-        // Force a new page if the next image would overflow
-        if (rowY + h > pageH - margin) {
+        // Force a new page if the next image+caption would overflow
+        if (rowY + cellH > pageH - margin) {
           doc.addPage();
           rowY = margin;
           col = 0;
@@ -127,23 +133,34 @@ export async function generatePdf(args: GeneratePdfArgs): Promise<Buffer> {
 
         const x = margin + col * (colWidth + gap);
         try {
-          doc.image(photo.buffer, x, rowY, { fit: [w, h] });
+          doc.image(photo.buffer, x, rowY, { fit: [imgW, imgH] });
         } catch {
-          // Bad image data — draw a placeholder and keep going.
-          doc.rect(x, rowY, w, h).stroke("#cccccc");
+          doc.rect(x, rowY, imgW, imgH).stroke("#cccccc");
           doc.fillColor("#999").fontSize(9).text("(unreadable)", x + 4, rowY + 4);
           doc.fillColor("black");
         }
 
-        if (h > rowH) rowH = h;
+        if (caption) {
+          doc
+            .fontSize(8)
+            .font("Helvetica")
+            .fillColor("#444")
+            .text(caption, x, rowY + imgH + 2, {
+              width: imgW,
+              align: "center",
+              lineBreak: false,
+              ellipsis: true,
+            });
+          doc.fillColor("black");
+        }
+
+        if (cellH > rowH) rowH = cellH;
         col += 1;
 
         if (col === 2) {
           col = 0;
           rowY += rowH + gap;
           rowH = 0;
-          // Move pdfkit cursor below the row so subsequent text would land
-          // there if we ever continue past photos.
           doc.y = rowY;
         }
       }

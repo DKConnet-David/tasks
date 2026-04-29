@@ -145,6 +145,7 @@ export async function runSubmissionPipeline(args: PipelineArgs): Promise<Pipelin
       summary,
       comment,
       photos: photoData.map(({ buffer, width, height }) => ({ buffer, width, height })),
+      photoCaptions: summary.photo_captions,
       techName: appLogin,
       submittedAt: new Date(),
     });
@@ -187,12 +188,13 @@ export async function runSubmissionPipeline(args: PipelineArgs): Promise<Pipelin
   if (photoData.length > 0) {
     try {
       const splynx = getServiceSplynxClient(config);
+      const captions = summary.photo_captions ?? [];
       const result = await splynx.addTaskAttachments(
         taskId,
         splynxAdminId,
         photoData.map((p, i) => ({
           buffer: p.buffer,
-          filename: `task-${taskId}-${submissionId}-photo-${i + 1}.jpg`,
+          filename: photoFilename(i, captions[i]),
           mimetype: "image/jpeg",
         })),
       );
@@ -267,6 +269,24 @@ export async function runSubmissionPipeline(args: PipelineArgs): Promise<Pipelin
     whatsappMessageId,
     errors,
   };
+}
+
+/**
+ * Build a Splynx attachment filename from the AI's photo caption.
+ *   "Customer router before replacement" + idx 0 -> "01-customer-router-before-replacement.jpg"
+ *   undefined caption + idx 4              -> "05-photo.jpg"
+ */
+function photoFilename(index: number, caption: string | undefined): string {
+  const num = String(index + 1).padStart(2, "0");
+  const safe = (caption ?? "")
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[^\p{Letter}\p{Number}\s-]/gu, "")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 60);
+  return safe ? `${num}-${safe}.jpg` : `${num}-photo.jpg`;
 }
 
 function persistRating(

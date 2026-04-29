@@ -24,6 +24,10 @@ const summary: ExternalSummary = {
   what_was_done: "Replaced the existing TOTOLINK with the EW3000GX. Tested speeds with the customer on site.",
   observations: "Smoking-area room added a second EW3000GX for coverage.",
   follow_ups: "Confirm billing for two routers; David flagged it as billable.",
+  photo_captions: [
+    "Customer router before replacement",
+    "EW3000GX powered up at customer site",
+  ],
 };
 
 // These strings are deliberately distinctive so their presence in any

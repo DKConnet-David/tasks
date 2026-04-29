@@ -229,10 +229,13 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
       if (id === null) return reply.code(400).send({ error: "invalid_id" });
       const sub = loadSubmission(db, id);
       if (!sub) return reply.code(404).send({ error: "not_found" });
-      const summary = sub.summary_json ? safeParse(sub.summary_json) : null;
-      if (!summary || !isSummary(summary)) {
+      const parsedSummary = sub.summary_json
+        ? ExternalSummarySchema.safeParse(safeParse(sub.summary_json))
+        : null;
+      if (!parsedSummary?.success) {
         return reply.code(400).send({ error: "no_summary_to_resend" });
       }
+      const summary = parsedSummary.data;
       const pdfFile = path.join(
         config.DATA_DIR,
         "photos",
@@ -313,12 +316,11 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
           "report.pdf",
         );
         const pdfBuffer = await fs.readFile(pdfFile);
-        const summary = sub.corrected_summary_json
-          ? safeParse(sub.corrected_summary_json)
-          : sub.summary_json
-            ? safeParse(sub.summary_json)
-            : null;
-        if (!summary || !isSummary(summary)) throw new Error("no summary stored");
+        const summarySource = sub.corrected_summary_json ?? sub.summary_json;
+        if (!summarySource) throw new Error("no summary stored");
+        const parsed = ExternalSummarySchema.safeParse(safeParse(summarySource));
+        if (!parsed.success) throw new Error("stored summary is malformed");
+        const summary = parsed.data;
         const body = formatSplynxComment(summary, sub.app_login, !!sub.corrected_summary_json);
         const result = await splynx.addTaskComment(sub.task_id, sub.splynx_admin_id, body, [
           {
@@ -335,12 +337,23 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
       // Photos
       if (photos.length > 0) {
         try {
+          // Reuse the captions from the (possibly corrected) summary so the
+          // re-attached files share the same human-readable names as the
+          // first attempt.
+          const summaryJson = sub.corrected_summary_json ?? sub.summary_json;
+          const captions: string[] = (() => {
+            if (!summaryJson) return [];
+            const obj = safeParse(summaryJson) as { photo_captions?: unknown } | null;
+            return Array.isArray(obj?.photo_captions)
+              ? (obj.photo_captions.filter((s): s is string => typeof s === "string"))
+              : [];
+          })();
           const buffers = await Promise.all(
-            photos.map(async (p) => ({
+            photos.map(async (p, i) => ({
               buffer: await fs.readFile(
                 photoPath(config.DATA_DIR, sub.task_id, sub.id, p.filename),
               ),
-              filename: `task-${sub.task_id}-${sub.id}-photo-${p.id}.jpg`,
+              filename: filenameFor(i, captions[i]),
               mimetype: "image/jpeg",
             })),
           );
@@ -758,12 +771,16 @@ function safeParse(json: string): unknown {
   }
 }
 
-function isSummary(v: unknown): v is { headline: string; what_was_done: string; observations: string; follow_ups: string } {
-  return (
-    typeof v === "object" &&
-    v !== null &&
-    typeof (v as Record<string, unknown>).headline === "string" &&
-    typeof (v as Record<string, unknown>).what_was_done === "string"
-  );
+function filenameFor(index: number, caption: string | undefined): string {
+  const num = String(index + 1).padStart(2, "0");
+  const safe = (caption ?? "")
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[^\p{Letter}\p{Number}\s-]/gu, "")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 60);
+  return safe ? `${num}-${safe}.jpg` : `${num}-photo.jpg`;
 }
 

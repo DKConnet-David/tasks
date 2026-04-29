@@ -19,6 +19,11 @@ export const ExternalSummarySchema = z.object({
   what_was_done: z.string().min(1),
   observations: z.string().default(""),
   follow_ups: z.string().default(""),
+  // One short caption per submitted photo, in upload order. Used to name
+  // the Splynx attachments and to label photos in the PDF. Optional so
+  // legacy submissions whose summary_json was saved before this field
+  // existed still load cleanly.
+  photo_captions: z.array(z.string()).default([]),
 });
 export type ExternalSummary = z.infer<typeof ExternalSummarySchema>;
 

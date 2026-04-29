@@ -30,6 +30,7 @@ Always call the save_summary tool with these fields:
 - what_was_done: 2 to 4 sentences describing the actual work performed. Reference specific equipment / changes visible in the photos and confirmed by the tech's notes.
 - observations: noteworthy site conditions, customer requests, or stock-related notes. Empty string if none.
 - follow_ups: any follow-up actions, billing notes, or items needing attention. Empty string if none.
+- photo_captions: an array with EXACTLY one short caption per photo, in the same order the photos were attached. Each caption is 3 to 8 words describing what the photo shows — these become the filenames in Splynx and labels under each photo in the PDF, so they need to be informative on their own. Examples: "Customer router before replacement", "EW3000GX powered up and connected", "Patch panel labelled and tidy". Avoid full sentences, generic words like "photo" or "image", and any rating language.
 
 Reason from the photos plus the tech's notes; the Splynx task description is supplementary context (it describes what was scheduled, not necessarily what happened).`;
 
@@ -84,8 +85,20 @@ export async function summarize(args: SummarizeArgs): Promise<ExternalSummary> {
             what_was_done: { type: "string" },
             observations: { type: "string" },
             follow_ups: { type: "string" },
+            photo_captions: {
+              type: "array",
+              items: { type: "string" },
+              description:
+                "One short caption per photo in upload order. Used as filenames and labels.",
+            },
           },
-          required: ["headline", "what_was_done", "observations", "follow_ups"],
+          required: [
+            "headline",
+            "what_was_done",
+            "observations",
+            "follow_ups",
+            "photo_captions",
+          ],
         },
       },
     ],
@@ -102,7 +115,21 @@ export async function summarize(args: SummarizeArgs): Promise<ExternalSummary> {
   if (!toolUse || toolUse.type !== "tool_use") {
     throw new Error("Claude did not return a tool_use block");
   }
-  return ExternalSummarySchema.parse(toolUse.input);
+  const parsed = ExternalSummarySchema.parse(toolUse.input);
+
+  // Defensive: if Claude returns the wrong number of captions, pad/truncate
+  // so the array length always matches the photo count. Padding uses a
+  // neutral string so the filename doesn't stay empty.
+  const expected = args.photoBuffers.length;
+  if (parsed.photo_captions.length !== expected) {
+    const fixed: string[] = [];
+    for (let i = 0; i < expected; i++) {
+      fixed.push(parsed.photo_captions[i] ?? `photo ${i + 1}`);
+    }
+    parsed.photo_captions = fixed;
+  }
+
+  return parsed;
 }
 
 export interface SummarizeDebugInfo {
