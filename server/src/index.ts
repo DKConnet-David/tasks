@@ -4,6 +4,7 @@ import multipart from "@fastify/multipart";
 import { loadConfig } from "./config.js";
 import { getDb } from "./db.js";
 import { registerAuthRoutes } from "./routes/auth.js";
+import { registerTaskRoutes } from "./routes/tasks.js";
 
 async function main() {
   const config = loadConfig();
@@ -38,8 +39,9 @@ async function main() {
   await app.register(
     async (api) => {
       await registerAuthRoutes(api, config);
-      // Tasks, admin, and whatsapp routes are registered here as they are
-      // implemented. See server/src/routes/{tasks,admin,whatsapp}.ts.
+      await registerTaskRoutes(api, config);
+      // Admin and whatsapp routes are registered here as they are
+      // implemented. See server/src/routes/{admin,whatsapp}.ts.
     },
     { prefix: "/api" },
   );
