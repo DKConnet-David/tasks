@@ -8,6 +8,8 @@ interface Submission {
   app_login: string;
   source: string;
   comment: string | null;
+  summary_json: string | null;
+  splynx_comment_id: number | null;
   status: "pending" | "success" | "partial" | "failed";
   error: string | null;
   created_at: number;
@@ -20,6 +22,13 @@ interface Photo {
   size_bytes: number;
   width: number;
   height: number;
+}
+
+interface Summary {
+  headline: string;
+  what_was_done: string;
+  observations: string;
+  follow_ups: string;
 }
 
 interface SubmissionResponse {
@@ -61,6 +70,9 @@ export function Submitting() {
   }
 
   const { submission, photos } = data;
+  const summary: Summary | null = submission.summary_json
+    ? safeParseSummary(submission.summary_json)
+    : null;
   const statusBadgeClass =
     submission.status === "success"
       ? "badge success"
@@ -76,20 +88,62 @@ export function Submitting() {
       </div>
 
       <h1 style={{ marginBottom: 0 }}>Submission #{submission.id}</h1>
-      <div className="row" style={{ gap: 8 }}>
+      <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
         <span className={statusBadgeClass}>{submission.status.toUpperCase()}</span>
         <span className="muted">by {submission.app_login}</span>
         <span className="muted">{new Date(submission.created_at).toLocaleString()}</span>
+        {submission.splynx_comment_id !== null && (
+          <span className="badge success">Splynx ✓</span>
+        )}
       </div>
 
-      <div className="panel">
-        <strong>AI summary + WhatsApp + Splynx writeback:</strong>{" "}
-        <span className="muted">coming in Phase C — for now, this just confirms photos and the note were saved.</span>
-      </div>
+      {submission.error && (
+        <div className="panel danger">
+          <strong>Some steps reported errors:</strong>
+          <pre style={{ whiteSpace: "pre-wrap", margin: "8px 0 0", fontFamily: "inherit" }}>
+            {submission.error}
+          </pre>
+        </div>
+      )}
+
+      {summary && (
+        <div className="panel stack">
+          <h2 style={{ margin: 0 }}>{summary.headline}</h2>
+          <div>
+            <strong>What was done</strong>
+            <p style={{ whiteSpace: "pre-wrap", margin: "4px 0 0" }}>{summary.what_was_done}</p>
+          </div>
+          {summary.observations.trim() && (
+            <div>
+              <strong>Observations</strong>
+              <p style={{ whiteSpace: "pre-wrap", margin: "4px 0 0" }}>{summary.observations}</p>
+            </div>
+          )}
+          {summary.follow_ups.trim() && (
+            <div>
+              <strong>Follow-ups</strong>
+              <p style={{ whiteSpace: "pre-wrap", margin: "4px 0 0" }}>{summary.follow_ups}</p>
+            </div>
+          )}
+          <div className="row" style={{ gap: "0.5rem" }}>
+            <a href={`/api/submissions/${submission.id}/pdf`} target="_blank" rel="noreferrer">
+              <button className="secondary">Download PDF</button>
+            </a>
+          </div>
+        </div>
+      )}
+
+      {!summary && submission.status !== "success" && (
+        <div className="panel">
+          <em className="muted">
+            AI summary not available — see the error above for details.
+          </em>
+        </div>
+      )}
 
       {submission.comment && (
         <div className="panel stack">
-          <strong>Your note</strong>
+          <strong>Your note (verbatim)</strong>
           <div style={{ whiteSpace: "pre-wrap" }}>{submission.comment}</div>
         </div>
       )}
@@ -130,4 +184,21 @@ export function Submitting() {
       )}
     </div>
   );
+}
+
+function safeParseSummary(json: string): Summary | null {
+  try {
+    const obj = JSON.parse(json);
+    if (
+      typeof obj?.headline === "string" &&
+      typeof obj?.what_was_done === "string" &&
+      typeof obj?.observations === "string" &&
+      typeof obj?.follow_ups === "string"
+    ) {
+      return obj as Summary;
+    }
+  } catch {
+    // fallthrough
+  }
+  return null;
 }

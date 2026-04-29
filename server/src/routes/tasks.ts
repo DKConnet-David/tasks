@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import path from "node:path";
 import { createReadStream } from "node:fs";
 import type { FastifyInstance } from "fastify";
 import { makeAuthGuards } from "../lib/auth-guards.js";
@@ -6,6 +7,7 @@ import { getServiceSplynxClient, isSplynxConfigured } from "../splynx/service-cl
 import type { AppConfig } from "../config.js";
 import { getDb } from "../db.js";
 import { photoPath, processAndSavePhoto, type SourcePhoto } from "../photos/store.js";
+import { runSubmissionPipeline } from "../pipeline/submit-task.js";
 
 const MAX_PHOTOS = 12;
 const COMMENT_MAX = 4000;
@@ -129,20 +131,92 @@ export async function registerTaskRoutes(app: FastifyInstance, config: AppConfig
       }
     }
 
-    const finalStatus = failedCount === 0 ? "success" : savedCount === 0 ? "failed" : "partial";
-    db.prepare(`UPDATE submissions SET status = ?, updated_at = ? WHERE id = ?`).run(
-      finalStatus,
-      Date.now(),
+    if (savedCount === 0) {
+      db.prepare(`UPDATE submissions SET status = 'failed', updated_at = ? WHERE id = ?`).run(
+        Date.now(),
+        submissionId,
+      );
+      return reply.code(500).send({
+        error: "all_photos_failed",
+        submission_id: submissionId,
+      });
+    }
+
+    // ---- Pipeline (AI summarize → PDF → Splynx writeback) ----
+    // Re-fetch task fresh from Splynx (don't trust client-cached state). Then
+    // run the pipeline; pipeline writes its own status/summary/error fields
+    // back to the submissions row.
+    if (!isSplynxConfigured(config)) {
+      db.prepare(
+        `UPDATE submissions SET status = 'partial', error = ?, updated_at = ? WHERE id = ?`,
+      ).run("Splynx not configured — photos saved only.", Date.now(), submissionId);
+      return reply.code(201).send({
+        submission_id: submissionId,
+        task_id: taskId,
+        status: "partial",
+        photos_saved: savedCount,
+        photos_failed: failedCount,
+      });
+    }
+
+    const splynx = getServiceSplynxClient(config);
+    let task;
+    try {
+      task = await splynx.getTaskRaw(taskId);
+    } catch (err) {
+      const e = err as { response?: { status?: number } };
+      req.log.error({ err: e }, "task refetch failed before pipeline");
+      db.prepare(
+        `UPDATE submissions SET status = 'partial', error = ?, updated_at = ? WHERE id = ?`,
+      ).run(`Splynx task fetch failed (${e.response?.status ?? "?"})`, Date.now(), submissionId);
+      return reply.code(201).send({
+        submission_id: submissionId,
+        task_id: taskId,
+        status: "partial",
+        photos_saved: savedCount,
+        photos_failed: failedCount,
+      });
+    }
+
+    // Read back the photo rows we just inserted, then run the pipeline.
+    const photoRows = db
+      .prepare(
+        `SELECT id, filename, width, height
+         FROM submission_photos
+         WHERE submission_id = ?
+         ORDER BY id ASC`,
+      )
+      .all(submissionId) as { id: number; filename: string; width: number; height: number }[];
+
+    const result = await runSubmissionPipeline({
+      config,
+      db,
+      log: req.log,
       submissionId,
-    );
+      taskId,
+      splynxAdminId: session.splynx_admin_id,
+      appLogin: session.app_login,
+      comment,
+      photos: photoRows.map((r) => ({
+        id: r.id,
+        filename: r.filename,
+        filePath: photoPath(config.DATA_DIR, taskId, submissionId, r.filename),
+        width: r.width,
+        height: r.height,
+      })),
+      task,
+    });
 
     return reply.code(201).send({
       submission_id: submissionId,
       task_id: taskId,
-      status: finalStatus,
+      status: result.status,
       photos_saved: savedCount,
       photos_failed: failedCount,
-      comment_length: comment.length,
+      summary: result.summary,
+      splynx_comment_id: result.splynxCommentId,
+      splynx_attachment_ids: result.splynxAttachmentIds,
+      errors: result.errors,
     });
   });
 
@@ -158,7 +232,7 @@ export async function registerTaskRoutes(app: FastifyInstance, config: AppConfig
     const row = db
       .prepare(
         `SELECT id, task_id, app_login, splynx_admin_id, source, comment,
-                summary_json, status, error, created_at, updated_at
+                summary_json, splynx_comment_id, status, error, created_at, updated_at
          FROM submissions WHERE id = ?`,
       )
       .get(submissionId) as
@@ -170,6 +244,7 @@ export async function registerTaskRoutes(app: FastifyInstance, config: AppConfig
           source: string;
           comment: string | null;
           summary_json: string | null;
+          splynx_comment_id: number | null;
           status: string;
           error: string | null;
           created_at: number;
@@ -201,6 +276,48 @@ export async function registerTaskRoutes(app: FastifyInstance, config: AppConfig
       photos,
     };
   });
+
+  // Download the generated PDF for a submission.
+  app.get(
+    "/submissions/:id/pdf",
+    { preHandler: requireSession },
+    async (req, reply) => {
+      const { id: idParam } = req.params as { id: string };
+      const submissionId = Number.parseInt(idParam, 10);
+      if (!Number.isFinite(submissionId) || submissionId <= 0) {
+        return reply.code(400).send({ error: "invalid_submission_id" });
+      }
+      const session = req.session!;
+
+      const row = db
+        .prepare(`SELECT task_id, app_login FROM submissions WHERE id = ?`)
+        .get(submissionId) as { task_id: number; app_login: string } | undefined;
+      if (!row) return reply.code(404).send({ error: "submission_not_found" });
+      if (!session.is_admin && row.app_login !== session.app_login) {
+        return reply.code(403).send({ error: "forbidden" });
+      }
+
+      const absPath = path.join(
+        config.DATA_DIR,
+        "photos",
+        String(row.task_id),
+        String(submissionId),
+        "report.pdf",
+      );
+      try {
+        await fs.stat(absPath);
+      } catch {
+        return reply.code(404).send({ error: "pdf_not_found" });
+      }
+
+      reply.header("Content-Type", "application/pdf");
+      reply.header(
+        "Content-Disposition",
+        `inline; filename="task-${row.task_id}-submission-${submissionId}.pdf"`,
+      );
+      return reply.send(createReadStream(absPath));
+    },
+  );
 
   // Serve a saved photo. Session required; submission must belong to the
   // session's app_login (or session is admin). Filename is checked for path
