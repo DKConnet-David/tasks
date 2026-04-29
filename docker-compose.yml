@@ -1,11 +1,34 @@
 services:
   api:
     build: ./server
-    env_file: .env
+    # Env vars come from Coolify's "Environment Variables" panel. Compose
+    # only forwards variables that are explicitly declared here with the
+    # ${VAR} substitution form — that's why each one is named explicitly
+    # below. Defaults (after :- ) keep the api booting when an optional var
+    # isn't set yet (e.g. WHATSAPP_GROUP_JID before onboarding).
     environment:
       DATA_DIR: /data
       HOST: 0.0.0.0
       PORT: 3000
+      NODE_ENV: production
+
+      SPLYNX_BASE_URL: ${SPLYNX_BASE_URL}
+      SPLYNX_API_KEY: ${SPLYNX_API_KEY:-}
+      SPLYNX_API_SECRET: ${SPLYNX_API_SECRET:-}
+
+      ADMIN_LOGIN: ${ADMIN_LOGIN}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      CLAUDE_MODEL: ${CLAUDE_MODEL:-claude-sonnet-4-6}
+
+      WHATSAPP_GROUP_JID: ${WHATSAPP_GROUP_JID:-}
+
+      SESSION_SECRET: ${SESSION_SECRET}
+      SESSION_TTL_SECONDS: ${SESSION_TTL_SECONDS:-43200}
+
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+      AI_DEBUG_LOG: ${AI_DEBUG_LOG:-false}
     volumes:
       - data:/data
     expose:
@@ -20,8 +43,8 @@ services:
   web:
     build: ./web
     # Single public port — nginx in this container serves the PWA and
-    # reverse-proxies /auth, /tasks, /admin, /health to the api service
-    # over the internal Docker network. The api service is not exposed.
+    # reverse-proxies /api/* and /health to the api service over the
+    # internal Docker network. The api service is not exposed.
     ports:
       - "9090:80"
     restart: unless-stopped
