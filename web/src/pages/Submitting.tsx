@@ -29,6 +29,19 @@ interface Summary {
   what_was_done: string;
   observations: string;
   follow_ups: string;
+  overview?: {
+    service_type?: string;
+    client_name?: string;
+    location?: string;
+    job_date?: string;
+    job_start_time?: string;
+    job_end_time?: string;
+    job_duration?: string;
+  };
+  work_completed?: string[];
+  photo_descriptions?: string[];
+  materials?: string[];
+  issues_notes?: string[];
 }
 
 interface SubmissionResponse {
@@ -109,27 +122,90 @@ export function Submitting() {
       {summary && (
         <div className="panel stack">
           <h2 style={{ margin: 0 }}>{summary.headline}</h2>
-          <div>
-            <strong>What was done</strong>
-            <p style={{ whiteSpace: "pre-wrap", margin: "4px 0 0" }}>{summary.what_was_done}</p>
-          </div>
-          {summary.observations.trim() && (
-            <div>
-              <strong>Observations</strong>
-              <p style={{ whiteSpace: "pre-wrap", margin: "4px 0 0" }}>{summary.observations}</p>
-            </div>
-          )}
-          {summary.follow_ups.trim() && (
-            <div>
-              <strong>Follow-ups</strong>
-              <p style={{ whiteSpace: "pre-wrap", margin: "4px 0 0" }}>{summary.follow_ups}</p>
-            </div>
-          )}
           <div className="row" style={{ gap: "0.5rem" }}>
             <a href={`/api/submissions/${submission.id}/pdf`} target="_blank" rel="noreferrer">
-              <button className="secondary">Download PDF</button>
+              <button className="secondary">Download full PDF report</button>
             </a>
           </div>
+
+          {summary.overview && hasOverview(summary.overview) && (
+            <Section title="1. Job/Task Overview">
+              <ul style={listStyle}>
+                <Bullet label="Service type" value={summary.overview.service_type} />
+                <Bullet label="Client" value={summary.overview.client_name} />
+                <Bullet label="Location" value={summary.overview.location} />
+                <Bullet label="Date" value={summary.overview.job_date} />
+                <Bullet label="Job Start Time" value={summary.overview.job_start_time} />
+                <Bullet label="Job End Time" value={summary.overview.job_end_time} />
+                <Bullet label="Job Duration" value={summary.overview.job_duration} />
+              </ul>
+            </Section>
+          )}
+
+          {summary.work_completed && summary.work_completed.length > 0 && (
+            <Section title="2. Work Completed">
+              <ul style={listStyle}>
+                {summary.work_completed.map((item, i) => (
+                  <li key={i}>{item}</li>
+                ))}
+              </ul>
+            </Section>
+          )}
+
+          {summary.photo_descriptions && summary.photo_descriptions.length > 0 && (
+            <Section title="3. Photos Analysis">
+              <ul style={listStyle}>
+                {summary.photo_descriptions.map((d, i) => (
+                  <li key={i}>
+                    <strong>Photo {i + 1}:</strong> {d}
+                  </li>
+                ))}
+              </ul>
+            </Section>
+          )}
+
+          {summary.materials && summary.materials.length > 0 && (
+            <Section title="4. Materials/Equipment">
+              <ul style={listStyle}>
+                {summary.materials.map((m, i) => (
+                  <li key={i}>{m}</li>
+                ))}
+              </ul>
+            </Section>
+          )}
+
+          {summary.issues_notes && summary.issues_notes.length > 0 && (
+            <Section title="5. Issues & Notes">
+              <ul style={listStyle}>
+                {summary.issues_notes.map((n, i) => (
+                  <li key={i}>{n}</li>
+                ))}
+              </ul>
+            </Section>
+          )}
+
+          {/* Fallback: show short prose when the structured fields are empty
+              (e.g. submissions made before the structured-summary feature). */}
+          {(!summary.work_completed || summary.work_completed.length === 0) && (
+            <div>
+              <strong>What was done</strong>
+              <p style={{ whiteSpace: "pre-wrap", margin: "4px 0 0" }}>{summary.what_was_done}</p>
+            </div>
+          )}
+          {summary.observations.trim() &&
+            (!summary.work_completed || summary.work_completed.length === 0) && (
+              <div>
+                <strong>Observations</strong>
+                <p style={{ whiteSpace: "pre-wrap", margin: "4px 0 0" }}>{summary.observations}</p>
+              </div>
+            )}
+          {summary.follow_ups.trim() &&
+            (!summary.work_completed || summary.work_completed.length === 0) && (
+              <div>
+                <strong>Follow-ups</strong>
+                <p style={{ whiteSpace: "pre-wrap", margin: "4px 0 0" }}>{summary.follow_ups}</p>
+              </div>
+            )}
         </div>
       )}
 
@@ -185,6 +261,33 @@ export function Submitting() {
     </div>
   );
 }
+
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <h3 style={{ margin: "8px 0 4px" }}>{title}</h3>
+      {children}
+    </div>
+  );
+}
+
+function Bullet({ label, value }: { label: string; value: string | undefined }) {
+  if (!value || !value.trim()) return null;
+  return (
+    <li>
+      <strong>{label}:</strong> {value}
+    </li>
+  );
+}
+
+function hasOverview(o: NonNullable<Summary["overview"]>): boolean {
+  return Object.values(o).some((v) => typeof v === "string" && v.trim().length > 0);
+}
+
+const listStyle: React.CSSProperties = {
+  margin: "4px 0 0",
+  paddingLeft: 20,
+};
 
 function safeParseSummary(json: string): Summary | null {
   try {

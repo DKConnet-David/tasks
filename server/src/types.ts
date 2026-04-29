@@ -14,15 +14,43 @@ import { z } from "zod";
  * payload-string level so future refactors can't smuggle rating text out.
  */
 
+export const JobOverviewSchema = z.object({
+  service_type: z.string().default(""),
+  client_name: z.string().default(""),
+  location: z.string().default(""),
+  job_date: z.string().default(""),
+  job_start_time: z.string().default(""),
+  job_end_time: z.string().default(""),
+  job_duration: z.string().default(""),
+});
+export type JobOverview = z.infer<typeof JobOverviewSchema>;
+
 export const ExternalSummarySchema = z.object({
+  // Short-form fields — used in the WhatsApp caption and Splynx comment
+  // body, where prose flows better than bullet lists.
   headline: z.string().min(1).max(120),
   what_was_done: z.string().min(1),
   observations: z.string().default(""),
   follow_ups: z.string().default(""),
-  // One short caption per submitted photo, in upload order. Used to name
-  // the Splynx attachments and to label photos in the PDF. Optional so
-  // legacy submissions whose summary_json was saved before this field
-  // existed still load cleanly.
+
+  // Structured-report fields — drive the PDF. Default to empty for legacy
+  // submissions whose summary_json predates this field; the PDF renderer
+  // skips empty sections.
+  overview: JobOverviewSchema.default({
+    service_type: "",
+    client_name: "",
+    location: "",
+    job_date: "",
+    job_start_time: "",
+    job_end_time: "",
+    job_duration: "",
+  }),
+  work_completed: z.array(z.string()).default([]),
+  photo_descriptions: z.array(z.string()).default([]),
+  materials: z.array(z.string()).default([]),
+  issues_notes: z.array(z.string()).default([]),
+
+  // Short slug per photo, for Splynx attachment filenames.
   photo_captions: z.array(z.string()).default([]),
 });
 export type ExternalSummary = z.infer<typeof ExternalSummarySchema>;

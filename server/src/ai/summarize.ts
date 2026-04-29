@@ -3,14 +3,6 @@ import type { AppConfig } from "../config.js";
 import { ExternalSummarySchema, type ExternalSummary } from "../types.js";
 import type { SplynxTaskRaw } from "../splynx/types.js";
 
-/**
- * Summarize a completed field-tech job. This produces ONLY the externally-
- * visible fields (PDF, WhatsApp, Splynx comment, tech response). The
- * admin-only quality rating is a separate Claude call in ai/rate.ts —
- * the type firewall in src/types.ts ensures the two outputs can never
- * cross-contaminate.
- */
-
 interface SummarizeArgs {
   config: AppConfig;
   task: SplynxTaskRaw;
@@ -19,20 +11,32 @@ interface SummarizeArgs {
   techName: string;
 }
 
-const SYSTEM_PROMPT = `You are summarizing a completed field-tech job for a small ISP / WISP. Your output is read by:
-1. The ops team in a WhatsApp group (with a PDF report attached)
-2. Internal admins via the Splynx ticket comment thread
+const SYSTEM_PROMPT = `You are a senior field-tech ops analyst at a small ISP / WISP. Your output drives:
+1. A WhatsApp group post — uses the SHORT fields (headline, what_was_done, observations, follow_ups).
+2. The Splynx ticket comment — uses the same short fields.
+3. The PDF Job Completion Summary report — uses the STRUCTURED fields (overview, work_completed, photo_descriptions, materials, issues_notes).
 
-Tone: plain South African English, factual, direct. No emoji. No markdown formatting inside field values. Do not invent details that aren't in the photos or the tech's notes.
+Tone everywhere: plain South African English. Factual, direct. No emoji. No markdown formatting inside field values. Do not invent details that aren't visible in the photos or stated in the tech's notes / task context.
 
-Always call the save_summary tool with these fields:
-- headline: a single sentence, max 80 chars, that captures the outcome (e.g. "Router replaced and tested at Alex Alarms"). Avoid filler words.
-- what_was_done: 2 to 4 sentences describing the actual work performed. Reference specific equipment / changes visible in the photos and confirmed by the tech's notes.
-- observations: noteworthy site conditions, customer requests, or stock-related notes. Empty string if none.
-- follow_ups: any follow-up actions, billing notes, or items needing attention. Empty string if none.
-- photo_captions: an array with EXACTLY one short caption per photo, in the same order the photos were attached. Each caption is 3 to 8 words describing what the photo shows — these become the filenames in Splynx and labels under each photo in the PDF, so they need to be informative on their own. Examples: "Customer router before replacement", "EW3000GX powered up and connected", "Patch panel labelled and tidy". Avoid full sentences, generic words like "photo" or "image", and any rating language.
+You MUST call the save_summary tool. Fields:
 
-Reason from the photos plus the tech's notes; the Splynx task description is supplementary context (it describes what was scheduled, not necessarily what happened).`;
+SHORT (for WhatsApp caption + Splynx comment text):
+- headline: ≤80 chars, single sentence summarising the outcome (e.g. "Wireless install completed at Theodore Arendse, Hopefield").
+- what_was_done: 2–4 sentences of prose covering the actual work performed.
+- observations: site conditions, customer requests, etc. Empty string if none.
+- follow_ups: action items / billing notes / things needing attention. Empty string if none.
+
+STRUCTURED (drive the PDF report):
+- overview: an object with service_type, client_name, location, job_date, job_start_time, job_end_time, job_duration. Pull these from the task title / description / customer info in the prompt context, and from the photos when they show timestamps. Use empty string for any field you genuinely cannot determine — do not guess.
+- work_completed: an ARRAY of bullet-list items naming each major piece of work performed. 6–12 short items typically. Examples: "LiteBeam 5AC antenna installed and configured", "Speed testing performed and verified", "All equipment functioning properly".
+- photo_descriptions: an ARRAY with EXACTLY one item per photo, in upload order. Each item is a single sentence describing what the photo shows in detail — include specific numbers, equipment models, readings, or names visible in the image. Examples: "Network speed test showing 64.90 Mbps download, 27.10 Mbps upload", "EW300-PRO router packaging", "Outdoor antenna installation on pole mount".
+- materials: an ARRAY of equipment / materials used (one per item). Include model numbers and pricing where shown. Examples: "LiteBeam 5AC outdoor antenna (LBAC 23-FTUA)", "Reyee EW300-PRO router (R 500.00)", "Pole mounting hardware".
+- issues_notes: an ARRAY of any issues encountered, deviations, or notable observations. Examples: "Client not on site during completion", "Client told people on the yard where technician mounted router". Empty array if there's nothing remarkable.
+
+ALSO:
+- photo_captions: an ARRAY with EXACTLY one short (3–8 word) caption per photo, in upload order. These become the filenames in Splynx, so they should be informative and filename-friendly. Examples: "speed-test-result", "router-installed-and-powered", "outdoor-antenna-mounted". Avoid generic words like "photo".
+
+Reason from the photos and the tech's notes; the Splynx task description is supplementary context (it describes what was scheduled, not necessarily what happened).`;
 
 export async function summarize(args: SummarizeArgs): Promise<ExternalSummary> {
   const client = new Anthropic({ apiKey: args.config.ANTHROPIC_API_KEY });
@@ -60,6 +64,7 @@ export async function summarize(args: SummarizeArgs): Promise<ExternalSummary> {
     `Task: ${args.task.title}`,
     `Site / address: ${args.task.address || "(not set)"}`,
     `Scheduled: ${args.task.scheduled_from && args.task.scheduled_from !== "0000-00-00 00:00:00" ? args.task.scheduled_from : "(no date)"}`,
+    `Splynx-recorded duration: ${args.task.formatted_duration || "(not recorded)"}`,
     `Technician on site: ${args.techName}`,
     "",
     `Tech's notes (verbatim): ${args.comment.trim() || "(no notes provided)"}`,
@@ -67,12 +72,12 @@ export async function summarize(args: SummarizeArgs): Promise<ExternalSummary> {
     `Splynx task description (for context):`,
     cleanDescription || "(empty)",
     "",
-    `Now summarize the completed work based on the photos and the tech's notes.`,
+    `Now produce the structured job completion summary using save_summary.`,
   ].join("\n");
 
   const response = await client.messages.create({
     model: args.config.CLAUDE_MODEL,
-    max_tokens: 1024,
+    max_tokens: 3000,
     system: SYSTEM_PROMPT,
     tools: [
       {
@@ -85,18 +90,43 @@ export async function summarize(args: SummarizeArgs): Promise<ExternalSummary> {
             what_was_done: { type: "string" },
             observations: { type: "string" },
             follow_ups: { type: "string" },
-            photo_captions: {
-              type: "array",
-              items: { type: "string" },
-              description:
-                "One short caption per photo in upload order. Used as filenames and labels.",
+            overview: {
+              type: "object",
+              properties: {
+                service_type: { type: "string" },
+                client_name: { type: "string" },
+                location: { type: "string" },
+                job_date: { type: "string" },
+                job_start_time: { type: "string" },
+                job_end_time: { type: "string" },
+                job_duration: { type: "string" },
+              },
+              required: [
+                "service_type",
+                "client_name",
+                "location",
+                "job_date",
+                "job_start_time",
+                "job_end_time",
+                "job_duration",
+              ],
             },
+            work_completed: { type: "array", items: { type: "string" } },
+            photo_descriptions: { type: "array", items: { type: "string" } },
+            materials: { type: "array", items: { type: "string" } },
+            issues_notes: { type: "array", items: { type: "string" } },
+            photo_captions: { type: "array", items: { type: "string" } },
           },
           required: [
             "headline",
             "what_was_done",
             "observations",
             "follow_ups",
+            "overview",
+            "work_completed",
+            "photo_descriptions",
+            "materials",
+            "issues_notes",
             "photo_captions",
           ],
         },
@@ -117,23 +147,19 @@ export async function summarize(args: SummarizeArgs): Promise<ExternalSummary> {
   }
   const parsed = ExternalSummarySchema.parse(toolUse.input);
 
-  // Defensive: if Claude returns the wrong number of captions, pad/truncate
-  // so the array length always matches the photo count. Padding uses a
-  // neutral string so the filename doesn't stay empty.
+  // Defensive: pad/truncate the per-photo arrays so their length matches the
+  // photo count exactly. Claude usually gets this right but it's cheap to
+  // enforce — empty captions/descriptions cause filename + report glitches.
   const expected = args.photoBuffers.length;
-  if (parsed.photo_captions.length !== expected) {
-    const fixed: string[] = [];
-    for (let i = 0; i < expected; i++) {
-      fixed.push(parsed.photo_captions[i] ?? `photo ${i + 1}`);
-    }
-    parsed.photo_captions = fixed;
-  }
+  parsed.photo_captions = padToLength(parsed.photo_captions, expected, (i) => `photo-${i + 1}`);
+  parsed.photo_descriptions = padToLength(parsed.photo_descriptions, expected, (i) => `Photo ${i + 1}`);
 
   return parsed;
 }
 
-export interface SummarizeDebugInfo {
-  inputTokens: number;
-  outputTokens: number;
-  model: string;
+function padToLength(arr: string[], n: number, fallback: (i: number) => string): string[] {
+  if (arr.length === n) return arr;
+  const out: string[] = [];
+  for (let i = 0; i < n; i++) out.push(arr[i] ?? fallback(i));
+  return out;
 }

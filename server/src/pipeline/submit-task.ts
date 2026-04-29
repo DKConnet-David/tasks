@@ -145,7 +145,6 @@ export async function runSubmissionPipeline(args: PipelineArgs): Promise<Pipelin
       summary,
       comment,
       photos: photoData.map(({ buffer, width, height }) => ({ buffer, width, height })),
-      photoCaptions: summary.photo_captions,
       techName: appLogin,
       submittedAt: new Date(),
     });

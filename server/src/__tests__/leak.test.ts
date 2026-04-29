@@ -24,9 +24,28 @@ const summary: ExternalSummary = {
   what_was_done: "Replaced the existing TOTOLINK with the EW3000GX. Tested speeds with the customer on site.",
   observations: "Smoking-area room added a second EW3000GX for coverage.",
   follow_ups: "Confirm billing for two routers; David flagged it as billable.",
-  photo_captions: [
-    "Customer router before replacement",
+  overview: {
+    service_type: "Router replacement",
+    client_name: "Alex Alarms",
+    location: "138 Main Rd, St Helena Bay",
+    job_date: "2026-04-29",
+    job_start_time: "12:45",
+    job_end_time: "13:40",
+    job_duration: "55m",
+  },
+  work_completed: [
+    "EW3000GX router installed and configured",
+    "Speeds tested with customer on site",
+  ],
+  photo_descriptions: [
+    "Customer router before replacement showing serial number",
     "EW3000GX powered up at customer site",
+  ],
+  materials: ["Reyee EW3000GX router"],
+  issues_notes: ["No issues encountered"],
+  photo_captions: [
+    "router-before-replacement",
+    "ew3000gx-powered-up",
   ],
 };
 
