@@ -32,7 +32,14 @@ let cached: AppConfig | null = null;
 
 export function loadConfig(): AppConfig {
   if (cached) return cached;
-  const parsed = ConfigSchema.safeParse(process.env);
+  // Treat empty-string env vars as unset. Compose substitutes ${VAR:-} with
+  // "" when the variable is missing, which would otherwise fail zod's url()
+  // and min(1) checks for fields that are meant to be optional.
+  const env: Record<string, string | undefined> = {};
+  for (const [k, v] of Object.entries(process.env)) {
+    env[k] = v === "" ? undefined : v;
+  }
+  const parsed = ConfigSchema.safeParse(env);
   if (!parsed.success) {
     const issues = parsed.error.issues.map((i) => `  - ${i.path.join(".")}: ${i.message}`).join("\n");
     throw new Error(`Invalid environment configuration:\n${issues}`);
