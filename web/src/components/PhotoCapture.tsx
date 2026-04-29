@@ -13,7 +13,7 @@ interface Props {
   disabled?: boolean;
 }
 
-const DEFAULT_MAX = 12;
+const DEFAULT_MAX = 50;
 
 export function PhotoCapture({ photos, onChange, max = DEFAULT_MAX, disabled }: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
@@ -28,14 +28,15 @@ export function PhotoCapture({ photos, onChange, max = DEFAULT_MAX, disabled }: 
 
     const remaining = max - photos.length;
     const accepted: CapturedPhoto[] = [];
-    let rejected = 0;
+    let nonImage = 0;
+    let overLimit = 0;
     for (const f of files) {
-      if (accepted.length >= remaining) {
-        rejected += 1;
+      if (!f.type.startsWith("image/")) {
+        nonImage += 1;
         continue;
       }
-      if (!f.type.startsWith("image/")) {
-        rejected += 1;
+      if (accepted.length >= remaining) {
+        overLimit += 1;
         continue;
       }
       accepted.push({
@@ -44,11 +45,14 @@ export function PhotoCapture({ photos, onChange, max = DEFAULT_MAX, disabled }: 
         previewUrl: URL.createObjectURL(f),
       });
     }
-    if (rejected > 0) {
-      setError(
-        `${rejected} file${rejected === 1 ? "" : "s"} skipped (non-image or limit of ${max} photos reached).`,
-      );
+    const messages: string[] = [];
+    if (nonImage > 0) {
+      messages.push(`${nonImage} non-image file${nonImage === 1 ? "" : "s"} skipped.`);
     }
+    if (overLimit > 0) {
+      messages.push(`${overLimit} skipped — already at the ${max}-photo limit.`);
+    }
+    setError(messages.length > 0 ? messages.join(" ") : null);
     onChange([...photos, ...accepted]);
   }
 

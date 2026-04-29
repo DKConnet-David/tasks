@@ -18,18 +18,20 @@ async function main() {
     logger: {
       level: config.NODE_ENV === "production" ? "info" : "debug",
     },
-    bodyLimit: 50 * 1024 * 1024,
-    // We sit behind nginx (in the web container) which forwards the
-    // X-Forwarded-Proto header. Trusting it lets req.protocol reflect the
-    // real client-side scheme so we set Secure cookies on HTTPS only.
+    // Up to 50 photos × ~10MB each from modern phone cameras = 500MB.
+    // Multipart's per-file fileSize limit below is the real per-file cap;
+    // bodyLimit covers the aggregate.
+    bodyLimit: 600 * 1024 * 1024,
     trustProxy: true,
   });
 
   await app.register(cookie, { secret: config.SESSION_SECRET });
   await app.register(multipart, {
     limits: {
-      fileSize: 25 * 1024 * 1024,
-      files: 12,
+      // Per-file cap. 30 MB is generous for HEIC + uncompressed phone JPEGs.
+      fileSize: 30 * 1024 * 1024,
+      // Photo count cap (matches MAX_PHOTOS in routes/tasks.ts and admin.ts).
+      files: 50,
     },
   });
 
