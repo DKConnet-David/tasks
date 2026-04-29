@@ -21,9 +21,10 @@ RUN apt-get update \
 COPY package.json package-lock.json* ./
 RUN npm install --no-audit --no-fund
 
-COPY tsconfig.json ./
+COPY tsconfig.json tsconfig.build.json ./
 COPY src ./src
-RUN npm run build
+RUN npm run build \
+ && test -f dist/index.js   # fail the build clearly if dist layout regresses
 
 FROM node:20-bookworm-slim
 WORKDIR /app
