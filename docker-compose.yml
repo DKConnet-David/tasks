@@ -11,6 +11,10 @@ services:
       HOST: 0.0.0.0
       PORT: 3000
       NODE_ENV: production
+      # Server-side date formatting (PDF report header, WhatsApp test message,
+      # log timestamps, SQLite CURRENT_TIMESTAMP) follows this zone. Browser-
+      # side date formatting in the PWA already uses the user's local zone.
+      TZ: ${TZ:-Africa/Johannesburg}
 
       SPLYNX_BASE_URL: ${SPLYNX_BASE_URL}
       SPLYNX_API_KEY: ${SPLYNX_API_KEY:-}

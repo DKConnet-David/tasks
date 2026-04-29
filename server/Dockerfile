@@ -29,8 +29,11 @@ RUN npm run build \
 FROM node:20-bookworm-slim
 WORKDIR /app
 ENV NODE_ENV=production
+# tzdata is required for the TZ env var to actually map a zone name like
+# "Africa/Johannesburg" — the slim base image strips it out otherwise and
+# JS Date.toLocaleString() silently falls back to UTC.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates tini \
+ && apt-get install -y --no-install-recommends ca-certificates tini tzdata \
  && rm -rf /var/lib/apt/lists/*
 COPY --from=build /app/package.json /app/package.json
 COPY --from=build /app/node_modules /app/node_modules
