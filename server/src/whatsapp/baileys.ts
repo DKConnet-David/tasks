@@ -188,13 +188,43 @@ export async function sendDocumentToGroup(args: {
   if (!sock || state.status !== "open") {
     throw new Error(`WhatsApp not connected (status=${state.status})`);
   }
-  const sent = await sock.sendMessage(args.jid, {
-    document: args.pdf,
-    mimetype: "application/pdf",
-    fileName: args.fileName,
-    caption: args.caption,
-  });
-  return sent?.key?.id ?? null;
+
+  // Baileys' media upload occasionally hits "Media upload failed on all
+  // hosts" when WhatsApp's CDN rotates or rate-limits — retrying with
+  // backoff almost always succeeds. The text protocol that "Send test
+  // message" uses doesn't go through the media CDN at all, which is why
+  // text works while document fails.
+  const maxAttempts = 3;
+  let lastError: unknown = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const sent = await sock.sendMessage(args.jid, {
+        document: args.pdf,
+        mimetype: "application/pdf",
+        fileName: args.fileName,
+        caption: args.caption,
+      });
+      if (attempt > 1) {
+        state.lastError = null;
+      }
+      return sent?.key?.id ?? null;
+    } catch (err) {
+      lastError = err;
+      const msg = err instanceof Error ? err.message : String(err);
+      if (attempt < maxAttempts) {
+        const delayMs = 1000 * Math.pow(2, attempt - 1); // 1s, 2s
+        await new Promise((r) => setTimeout(r, delayMs));
+        continue;
+      }
+      // Out of attempts. Re-throw so the pipeline records it.
+      const wrapped = new Error(
+        `WhatsApp document upload failed after ${maxAttempts} attempts: ${msg}`,
+      );
+      throw wrapped;
+    }
+  }
+  // Unreachable but keeps the typesystem happy.
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
 export async function sendTextToGroup(jid: string, text: string): Promise<string | null> {
