@@ -71,21 +71,37 @@ function uploadWithProgress<T>(
     xhr.withCredentials = true;
     xhr.responseType = "text";
 
-    xhr.upload.onprogress = (e: ProgressEvent) => {
-      if (!options.onProgress) return;
-      options.onProgress({
-        loaded: e.loaded,
-        total: e.total,
-        fraction: e.lengthComputable && e.total > 0 ? e.loaded / e.total : null,
-      });
-    };
-    xhr.upload.onload = () => {
-      // upload.onload fires when the request body is fully sent — server is
-      // now processing the multipart parts (sharp resize + AI calls + …).
+    // Fire onUploadComplete from whichever event source delivers it first,
+    // and only once. Some browsers don't reliably fire xhr.upload.onload
+    // for short uploads — the progress event hitting 100% is more
+    // dependable, so we trigger from there too.
+    let uploadCompleteFired = false;
+    const fireUploadComplete = () => {
+      if (uploadCompleteFired) return;
+      uploadCompleteFired = true;
       options.onUploadComplete?.();
     };
 
+    xhr.upload.onprogress = (e: ProgressEvent) => {
+      if (options.onProgress) {
+        options.onProgress({
+          loaded: e.loaded,
+          total: e.total,
+          fraction: e.lengthComputable && e.total > 0 ? e.loaded / e.total : null,
+        });
+      }
+      if (e.lengthComputable && e.total > 0 && e.loaded >= e.total) {
+        fireUploadComplete();
+      }
+    };
+    xhr.upload.onload = () => fireUploadComplete();
+    xhr.upload.onloadend = () => fireUploadComplete();
+
     xhr.onload = () => {
+      // Belt-and-braces: if neither upload event fired (very rare), the
+      // server response itself confirms the upload finished.
+      fireUploadComplete();
+
       let body: unknown = undefined;
       if (xhr.responseText) {
         try {
