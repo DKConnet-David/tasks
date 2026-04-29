@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { ApiError, api } from "../api";
+import { PhotoCapture, type CapturedPhoto } from "../components/PhotoCapture";
 
 interface SplynxTaskRaw {
   id: number;
@@ -26,11 +27,25 @@ interface TaskResponse {
   comments: SplynxComment[];
 }
 
+interface SubmitResponse {
+  submission_id: number;
+  task_id: number;
+  status: "success" | "partial" | "failed";
+  photos_saved: number;
+  photos_failed: number;
+}
+
 export function TaskDetail() {
   const { id } = useParams<{ id: string }>();
+  const nav = useNavigate();
   const [data, setData] = useState<TaskResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+
+  const [photos, setPhotos] = useState<CapturedPhoto[]>([]);
+  const [comment, setComment] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!id) return;
@@ -53,6 +68,44 @@ export function TaskDetail() {
       })
       .finally(() => setLoading(false));
   }, [id]);
+
+  // Revoke object URLs on unmount to avoid leaking blob memory.
+  useEffect(() => {
+    return () => {
+      for (const p of photos) URL.revokeObjectURL(p.previewUrl);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function handleSubmit() {
+    if (!id) return;
+    if (photos.length === 0) {
+      setSubmitError("Please attach at least one photo.");
+      return;
+    }
+    setSubmitting(true);
+    setSubmitError(null);
+    try {
+      const fd = new FormData();
+      fd.append("comment", comment);
+      for (const p of photos) fd.append("photos", p.file, p.file.name || "photo.jpg");
+      const res = await api.upload<SubmitResponse>(`/tasks/${id}/submit`, fd);
+      nav(`/submitting/${res.submission_id}`);
+    } catch (e: unknown) {
+      if (e instanceof ApiError) {
+        if (e.status === 400 && (e.body as { error?: string })?.error === "no_photos") {
+          setSubmitError("No valid photos uploaded.");
+        } else if (e.status === 413) {
+          setSubmitError("Photos are too large — try fewer or smaller files.");
+        } else {
+          setSubmitError(`Submit failed (${e.status}).`);
+        }
+      } else {
+        setSubmitError("Submit failed — network error.");
+      }
+      setSubmitting(false);
+    }
+  }
 
   if (loading) {
     return (
@@ -135,36 +188,49 @@ export function TaskDetail() {
           <div
             className="panel"
             style={{ marginTop: 8 }}
-            // Splynx descriptions are HTML written by trusted internal admins.
-            // eslint-disable-next-line react/no-danger
             dangerouslySetInnerHTML={{ __html: task.description }}
           />
         </details>
       )}
 
-      <h2 style={{ marginBottom: 0 }}>Comments ({comments.length})</h2>
-      {comments.length === 0 ? (
-        <p className="muted">No comments yet.</p>
-      ) : (
-        <div className="stack">
-          {comments.map((c) => (
-            <div key={c.id} className="panel stack">
-              <div className="row" style={{ justifyContent: "space-between" }}>
-                <strong>{c.admin_name}</strong>
-                <span className="muted">{c.created_at}</span>
-              </div>
-              <div
-                // eslint-disable-next-line react/no-danger
-                dangerouslySetInnerHTML={{ __html: c.comment }}
-              />
-            </div>
-          ))}
-        </div>
-      )}
+      <h2 style={{ marginBottom: 0 }}>Update task</h2>
+      <div className="panel stack">
+        <PhotoCapture photos={photos} onChange={setPhotos} disabled={submitting} />
 
-      <div className="panel">
-        <em className="muted">Photo capture and submit — coming next (Phase B).</em>
+        <label className="stack" style={{ gap: 4 }}>
+          <span className="muted">Notes (what was done, what was used, anything notable)</span>
+          <textarea
+            value={comment}
+            onChange={(e) => setComment(e.target.value)}
+            placeholder="Replaced router, tested speed with customer on site, all OK."
+            disabled={submitting}
+            maxLength={4000}
+          />
+        </label>
+
+        {submitError && <div className="danger">{submitError}</div>}
+
+        <button onClick={handleSubmit} disabled={submitting || photos.length === 0}>
+          {submitting ? "Submitting…" : "Submit update"}
+        </button>
       </div>
+
+      {comments.length > 0 && (
+        <>
+          <h2 style={{ marginBottom: 0 }}>Existing comments ({comments.length})</h2>
+          <div className="stack">
+            {comments.map((c) => (
+              <div key={c.id} className="panel stack">
+                <div className="row" style={{ justifyContent: "space-between" }}>
+                  <strong>{c.admin_name}</strong>
+                  <span className="muted">{c.created_at}</span>
+                </div>
+                <div dangerouslySetInnerHTML={{ __html: c.comment }} />
+              </div>
+            ))}
+          </div>
+        </>
+      )}
     </div>
   );
 }

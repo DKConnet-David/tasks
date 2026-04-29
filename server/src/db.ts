@@ -33,8 +33,8 @@ function migrate(d: Database.Database): void {
     CREATE TABLE IF NOT EXISTS submissions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       task_id INTEGER NOT NULL,
-      splynx_user_id INTEGER NOT NULL,
-      splynx_login TEXT NOT NULL,
+      app_login TEXT NOT NULL,
+      splynx_admin_id INTEGER NOT NULL,
       source TEXT NOT NULL DEFAULT 'tech',
       comment TEXT,
       tech_comment_override TEXT,
@@ -52,7 +52,7 @@ function migrate(d: Database.Database): void {
     );
 
     CREATE INDEX IF NOT EXISTS idx_submissions_task ON submissions(task_id);
-    CREATE INDEX IF NOT EXISTS idx_submissions_login ON submissions(splynx_login);
+    CREATE INDEX IF NOT EXISTS idx_submissions_login ON submissions(app_login);
     CREATE INDEX IF NOT EXISTS idx_submissions_status ON submissions(status);
     CREATE INDEX IF NOT EXISTS idx_submissions_created ON submissions(created_at DESC);
 
@@ -100,4 +100,27 @@ function migrate(d: Database.Database): void {
       ON submission_ratings(reviewed_at DESC)
       WHERE admin_score IS NOT NULL;
   `);
+
+  // Idempotent column renames for databases created with the older schema
+  // (when the auth model was Splynx-credential proxy). Safe to run on every
+  // boot: PRAGMA table_info checks current shape and ALTER is skipped if
+  // the rename has already been applied.
+  const cols = (table: string) =>
+    new Set(
+      (d.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map((r) => r.name),
+    );
+  const subCols = cols("submissions");
+  if (subCols.has("splynx_user_id") && !subCols.has("splynx_admin_id")) {
+    d.exec(`ALTER TABLE submissions RENAME COLUMN splynx_user_id TO splynx_admin_id`);
+  }
+  if (subCols.has("splynx_login") && !subCols.has("app_login")) {
+    d.exec(`ALTER TABLE submissions RENAME COLUMN splynx_login TO app_login`);
+  }
+  const sesCols = cols("sessions");
+  if (sesCols.has("splynx_user_id") && !sesCols.has("splynx_admin_id")) {
+    d.exec(`ALTER TABLE sessions RENAME COLUMN splynx_user_id TO splynx_admin_id`);
+  }
+  if (sesCols.has("splynx_login") && !sesCols.has("app_login")) {
+    d.exec(`ALTER TABLE sessions RENAME COLUMN splynx_login TO app_login`);
+  }
 }
