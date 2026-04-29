@@ -19,6 +19,9 @@ splynx-files-probe.json
 server/splynx-probe.json
 server/splynx-files-probe.json
 
+# TypeScript build cache
+*.tsbuildinfo
+
 .DS_Store
 .vscode/
 .idea/
