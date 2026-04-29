@@ -6,6 +6,7 @@ import { getDb } from "./db.js";
 import { registerAuthRoutes } from "./routes/auth.js";
 import { registerTaskRoutes } from "./routes/tasks.js";
 import { registerWhatsAppRoutes } from "./routes/whatsapp.js";
+import { registerAdminRoutes } from "./routes/admin.js";
 import { start as startBaileys } from "./whatsapp/baileys.js";
 
 async function main() {
@@ -43,7 +44,7 @@ async function main() {
       await registerAuthRoutes(api, config);
       await registerTaskRoutes(api, config);
       await registerWhatsAppRoutes(api, config);
-      // Admin (submissions list/detail/edit) routes land in Phase D.
+      await registerAdminRoutes(api, config);
     },
     { prefix: "/api" },
   );

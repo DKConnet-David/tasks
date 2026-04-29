@@ -6,9 +6,11 @@ import type { AppConfig } from "../config.js";
 import type { SplynxTaskRaw } from "../splynx/types.js";
 import { getServiceSplynxClient } from "../splynx/service-client.js";
 import { summarize } from "../ai/summarize.js";
+import { ratePerformance } from "../ai/rate.js";
 import { generatePdf } from "../pdf/generate.js";
 import { pipelineSendDocument } from "../routes/whatsapp.js";
-import type { ExternalSummary } from "../types.js";
+import { formatSplynxComment, formatWhatsAppCaption } from "../format/external.js";
+import type { ExternalSummary, InternalRating } from "../types.js";
 
 interface PhotoForPipeline {
   id: number;
@@ -76,25 +78,31 @@ export async function runSubmissionPipeline(args: PipelineArgs): Promise<Pipelin
     })),
   );
 
-  // ---- 1. AI summary ----
-  try {
-    log.info({ submissionId, photoCount: photoData.length }, "calling Claude.summarize");
-    summary = await summarize({
+  // ---- 1. AI summary + rating in parallel ----
+  // Rating is admin-only and never leaves the system. Running in parallel
+  // means the user-facing latency tracks summary alone, not summary+rating.
+  log.info({ submissionId, photoCount: photoData.length }, "calling Claude (summarize + rate)");
+  const [summaryResult, ratingResult] = await Promise.allSettled([
+    summarize({
       config,
       task,
       comment,
       photoBuffers: photoData.map((p) => p.buffer),
       techName: appLogin,
-    });
-    db.prepare(`UPDATE submissions SET summary_json = ?, updated_at = ? WHERE id = ?`).run(
-      JSON.stringify(summary),
-      Date.now(),
-      submissionId,
-    );
-    log.info({ submissionId, headline: summary.headline }, "summary saved");
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    log.error({ err }, "summarize failed");
+    }),
+    ratePerformance({
+      config,
+      db,
+      task,
+      comment,
+      photoBuffers: photoData.map((p) => p.buffer),
+      techName: appLogin,
+    }),
+  ]);
+
+  if (summaryResult.status === "rejected") {
+    const msg = summaryResult.reason instanceof Error ? summaryResult.reason.message : String(summaryResult.reason);
+    log.error({ err: summaryResult.reason }, "summarize failed");
     errors.push(`AI summary failed: ${msg}`);
     db.prepare(
       `UPDATE submissions SET status = 'failed', error = ?, updated_at = ? WHERE id = ?`,
@@ -108,6 +116,24 @@ export async function runSubmissionPipeline(args: PipelineArgs): Promise<Pipelin
       whatsappMessageId: null,
       errors,
     };
+  }
+  summary = summaryResult.value;
+  db.prepare(`UPDATE submissions SET summary_json = ?, updated_at = ? WHERE id = ?`).run(
+    JSON.stringify(summary),
+    Date.now(),
+    submissionId,
+  );
+  log.info({ submissionId, headline: summary.headline }, "summary saved");
+
+  // Rating: failure is non-fatal — we still want the submission to land
+  // even if the rating model errors. Stored only in submission_ratings.
+  if (ratingResult.status === "fulfilled") {
+    persistRating(db, submissionId, ratingResult.value);
+    log.info({ submissionId, score: ratingResult.value.score }, "rating saved");
+  } else {
+    const msg = ratingResult.reason instanceof Error ? ratingResult.reason.message : String(ratingResult.reason);
+    log.warn({ err: ratingResult.reason }, "rating failed (non-fatal)");
+    errors.push(`Rating failed (non-fatal): ${msg}`);
   }
 
   // ---- 2. PDF ----
@@ -138,7 +164,7 @@ export async function runSubmissionPipeline(args: PipelineArgs): Promise<Pipelin
   if (pdfBuffer) {
     try {
       const splynx = getServiceSplynxClient(config);
-      const commentBody = formatSplynxComment(summary, appLogin);
+      const commentBody = formatSplynxComment(summary, appLogin, false);
       const pdfFilename = `task-${taskId}-submission-${submissionId}.pdf`;
       const result = await splynx.addTaskComment(taskId, splynxAdminId, commentBody, [
         { buffer: pdfBuffer, filename: pdfFilename, mimetype: "application/pdf" },
@@ -243,55 +269,28 @@ export async function runSubmissionPipeline(args: PipelineArgs): Promise<Pipelin
   };
 }
 
-function formatWhatsAppCaption(
-  summary: ExternalSummary,
-  task: { id: number; title: string; address: string },
-  techName: string,
-): string {
-  // WhatsApp supports limited markdown: *bold*, _italic_, ~strike~, ```mono```.
-  const lines: string[] = [];
-  lines.push(`*${summary.headline}*`);
-  if (task.address) lines.push(`📍 ${task.address}`);
-  lines.push(`Task #${task.id}  •  ${techName}`);
-  lines.push("");
-  lines.push(summary.what_was_done);
-  if (summary.observations.trim()) {
-    lines.push("");
-    lines.push(`*Observations:* ${summary.observations}`);
-  }
-  if (summary.follow_ups.trim()) {
-    lines.push("");
-    lines.push(`*Follow-ups:* ${summary.follow_ups}`);
-  }
-  return lines.join("\n");
+function persistRating(
+  db: Database.Database,
+  submissionId: number,
+  rating: InternalRating,
+): void {
+  const now = Date.now();
+  db.prepare(
+    `INSERT INTO submission_ratings
+       (submission_id, ai_score, ai_rationale, ai_dimensions_json, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(submission_id) DO UPDATE SET
+       ai_score = excluded.ai_score,
+       ai_rationale = excluded.ai_rationale,
+       ai_dimensions_json = excluded.ai_dimensions_json,
+       updated_at = excluded.updated_at`,
+  ).run(
+    submissionId,
+    rating.score,
+    rating.rationale,
+    JSON.stringify(rating.dimensions),
+    now,
+    now,
+  );
 }
 
-function formatSplynxComment(summary: ExternalSummary, techName: string): string {
-  const parts: string[] = [];
-  parts.push(`<strong>${escapeHtml(summary.headline)}</strong>`);
-  parts.push(`<br><em>Submitted by ${escapeHtml(techName)} via Task Updater</em>`);
-  parts.push("<br><br>");
-  parts.push(`<strong>What was done</strong><br>${nl2br(escapeHtml(summary.what_was_done))}`);
-  if (summary.observations.trim()) {
-    parts.push("<br><br>");
-    parts.push(`<strong>Observations</strong><br>${nl2br(escapeHtml(summary.observations))}`);
-  }
-  if (summary.follow_ups.trim()) {
-    parts.push("<br><br>");
-    parts.push(`<strong>Follow-ups</strong><br>${nl2br(escapeHtml(summary.follow_ups))}`);
-  }
-  return parts.join("");
-}
-
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
-function nl2br(s: string): string {
-  return s.replace(/\n/g, "<br>");
-}
