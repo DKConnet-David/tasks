@@ -15,3 +15,10 @@ RUN xcaddy build \
 
 FROM caddy:2-alpine
 COPY --from=builder /usr/bin/caddy /usr/bin/caddy
+# Bake the Caddyfile into the image instead of bind-mounting it from the
+# host — Coolify's relative-path handling for compose volume mounts didn't
+# resolve `./Caddyfile` to a file (Docker created an empty directory at
+# the host path, then refused to mount a directory onto a file in the
+# container). Compile-time COPY removes the path-resolution variable.
+# Caddyfile lives next to this Dockerfile so the build context catches it.
+COPY Caddyfile /etc/caddy/Caddyfile

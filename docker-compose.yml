@@ -71,7 +71,10 @@ services:
     ports:
       - "9090:9090"
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Caddyfile is now baked into the image (caddy/Dockerfile) — see
+      # the comment in that file for why the bind-mount approach was
+      # dropped. To change the routing, edit caddy/Caddyfile and redeploy
+      # so the image rebuilds.
       - caddy_data:/data
       - caddy_config:/config
     depends_on:
