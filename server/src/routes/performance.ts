@@ -89,7 +89,7 @@ export async function registerPerformanceRoutes(
                 r.ai_dimensions_json, r.admin_dimensions_json
          FROM submissions s
          LEFT JOIN submission_ratings r ON r.submission_id = s.id
-         WHERE s.created_at >= ?`,
+         WHERE s.created_at >= ? AND s.hidden = 0`,
       )
       .all(since) as Array<{
       app_login: string;
@@ -100,10 +100,11 @@ export async function registerPerformanceRoutes(
       admin_dimensions_json: string | null;
     }>;
 
-    // Also fetch the all-time list of techs that have ever submitted, so a
-    // tech with zero submissions in the period still shows up.
+    // Also fetch the all-time list of techs that have ever submitted (any
+    // non-hidden), so a tech with zero submissions in the period still
+    // shows up in the team table.
     const allTechs = db
-      .prepare(`SELECT DISTINCT app_login FROM submissions ORDER BY app_login`)
+      .prepare(`SELECT DISTINCT app_login FROM submissions WHERE hidden = 0 ORDER BY app_login`)
       .all() as { app_login: string }[];
 
     const byTech = new Map<string, TechRow>();
@@ -213,16 +214,19 @@ export async function registerPerformanceRoutes(
       const rows = db
         .prepare(
           `SELECT s.id, s.task_id, s.app_login, s.source, s.status, s.created_at,
-                  s.summary_json,
+                  s.summary_json, s.corrected_summary_json,
                   r.ai_score, r.admin_score,
                   r.ai_dimensions_json, r.admin_dimensions_json
            FROM submissions s
            LEFT JOIN submission_ratings r ON r.submission_id = s.id
-           WHERE s.app_login = ? AND s.created_at >= ?
+           WHERE s.app_login = ? AND s.created_at >= ? AND s.hidden = 0
            ORDER BY s.created_at ASC`,
         )
         .all(login, since) as Array<
-        Omit<SubmissionRow, "job_type"> & { summary_json: string | null }
+        Omit<SubmissionRow, "job_type"> & {
+          summary_json: string | null;
+          corrected_summary_json: string | null;
+        }
       >;
 
       if (rows.length === 0) {
@@ -316,7 +320,11 @@ export async function registerPerformanceRoutes(
         const dayKey = ymd(row.created_at);
         dayCounts.set(dayKey, (dayCounts.get(dayKey) ?? 0) + 1);
 
-        const summary = row.summary_json ? safeParse(row.summary_json) : null;
+        // Prefer the admin-corrected summary (which carries job_type
+        // overrides from /admin/submissions/:id/job-type) over the raw AI
+        // output. Fall back to summary_json if there's no correction.
+        const summarySource = row.corrected_summary_json ?? row.summary_json;
+        const summary = summarySource ? safeParse(summarySource) : null;
         const jobType = (summary as { job_type?: string } | null)?.job_type ?? "other";
         const headline = (summary as { headline?: string } | null)?.headline ?? null;
 

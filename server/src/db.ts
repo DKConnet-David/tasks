@@ -140,6 +140,13 @@ function migrate(d: Database.Database): void {
   if (subCols.has("splynx_login") && !subCols.has("app_login")) {
     d.exec(`ALTER TABLE submissions RENAME COLUMN splynx_login TO app_login`);
   }
+  // 2026-04-30: admin can hide a submission (e.g. duplicate, typo task ID)
+  // without deleting it. Hidden rows are filtered out of the default
+  // Submissions list view and from all Performance dashboard rollups.
+  if (!subCols.has("hidden")) {
+    d.exec(`ALTER TABLE submissions ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0`);
+    d.exec(`CREATE INDEX IF NOT EXISTS idx_submissions_visible ON submissions(hidden, created_at DESC)`);
+  }
   const sesCols = cols("sessions");
   if (sesCols.has("splynx_user_id") && !sesCols.has("splynx_admin_id")) {
     d.exec(`ALTER TABLE sessions RENAME COLUMN splynx_user_id TO splynx_admin_id`);

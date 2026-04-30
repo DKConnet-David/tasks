@@ -12,6 +12,7 @@ interface Item {
   wa_message_id: string | null;
   status: "pending" | "success" | "partial" | "failed";
   admin_resolved: boolean;
+  hidden: boolean;
   created_at: number;
   ai_score: number | null;
   admin_score: number | null;
@@ -25,10 +26,16 @@ interface Page {
 export function SubmissionsList() {
   const [page, setPage] = useState<Page | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [filters, setFilters] = useState<{ status: string; login: string; q: string }>({
+  const [filters, setFilters] = useState<{
+    status: string;
+    login: string;
+    q: string;
+    includeHidden: boolean;
+  }>({
     status: "",
     login: "",
     q: "",
+    includeHidden: false,
   });
 
   function buildUrl(cursor?: number | null): string {
@@ -36,6 +43,7 @@ export function SubmissionsList() {
     if (filters.status) params.set("status", filters.status);
     if (filters.login.trim()) params.set("login", filters.login.trim());
     if (filters.q.trim()) params.set("q", filters.q.trim());
+    if (filters.includeHidden) params.set("include_hidden", "1");
     if (cursor) params.set("cursor", String(cursor));
     params.set("limit", "30");
     return `/admin/submissions?${params.toString()}`;
@@ -66,8 +74,11 @@ export function SubmissionsList() {
 
   useEffect(() => {
     load();
+    // includeHidden auto-reloads (UI expectation: tick the box, see hidden
+    // rows immediately). The other filters wait for the Search button so
+    // typing doesn't fire a request per keystroke.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [filters.includeHidden]);
 
   return (
     <div className="stack">
@@ -101,6 +112,20 @@ export function SubmissionsList() {
           />
           <button onClick={load}>Search</button>
         </div>
+        <label className="row" style={{ gap: 6, fontSize: "0.9em", alignItems: "center" }}>
+          <input
+            type="checkbox"
+            checked={filters.includeHidden}
+            onChange={(e) =>
+              setFilters({ ...filters, includeHidden: e.target.checked })
+            }
+            style={{ width: "auto" }}
+          />
+          <span className="muted">
+            Show hidden submissions (admins flag duplicates / typo task IDs as hidden so they
+            don't pollute the Performance dashboards).
+          </span>
+        </label>
       </div>
 
       {error && <div className="panel danger">{error}</div>}
@@ -127,7 +152,13 @@ export function SubmissionsList() {
               </thead>
               <tbody>
                 {page.items.map((it) => (
-                  <tr key={it.id} style={{ borderTop: "1px solid var(--c-border)" }}>
+                  <tr
+                    key={it.id}
+                    style={{
+                      borderTop: "1px solid var(--c-border)",
+                      opacity: it.hidden ? 0.5 : 1,
+                    }}
+                  >
                     <td style={td()}>
                       <Link to={`/admin/submissions/${it.id}`}>
                         {new Date(it.created_at).toLocaleString()}
@@ -143,6 +174,14 @@ export function SubmissionsList() {
                       )}
                     </td>
                     <td style={td()}>
+                      {it.hidden && (
+                        <span
+                          className="badge warn"
+                          style={{ marginRight: 6, fontSize: "0.7em" }}
+                        >
+                          hidden
+                        </span>
+                      )}
                       {it.headline ?? <span className="muted">—</span>}
                     </td>
                     <td style={td()}>

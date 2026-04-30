@@ -18,9 +18,20 @@ interface Submission {
   status: string;
   error: string | null;
   admin_resolved: boolean;
+  hidden: boolean;
   created_at: number;
   updated_at: number;
 }
+
+const JOB_TYPES = [
+  { value: "install", label: "Install" },
+  { value: "call_out", label: "Call-out" },
+  { value: "upgrade", label: "Upgrade" },
+  { value: "cable_replacement", label: "Cable Replacement" },
+  { value: "maintenance", label: "Maintenance" },
+  { value: "diagnostic", label: "Diagnostic" },
+  { value: "other", label: "Other" },
+] as const;
 
 interface Photo {
   id: number;
@@ -48,6 +59,7 @@ interface Summary {
   what_was_done: string;
   observations: string;
   follow_ups: string;
+  job_type?: string;
 }
 
 interface RatingResponse {
@@ -209,6 +221,40 @@ export function SubmissionDetail() {
     }
   }
 
+  async function saveJobType(jobType: string) {
+    if (!id) return;
+    setBusy("job-type");
+    setError(null);
+    try {
+      await api.patch(`/admin/submissions/${id}/job-type`, { job_type: jobType });
+      setOkMessage(`Job type set to "${jobType.replace(/_/g, " ")}".`);
+      await loadAll();
+    } catch (e) {
+      setError(e instanceof ApiError ? `Save failed (${e.status})` : "Network error");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function toggleHidden() {
+    if (!id || !data) return;
+    const next = !data.submission.hidden;
+    if (next && !confirm(
+      "Hide this submission? It will be excluded from the Submissions list and all Performance dashboards. The submission stays in the database — you can unhide it later.",
+    )) return;
+    setBusy("hidden");
+    setError(null);
+    try {
+      await api.patch(`/admin/submissions/${id}/hidden`, { hidden: next });
+      setOkMessage(next ? "Submission hidden." : "Submission visible again.");
+      await loadAll();
+    } catch (e) {
+      setError(e instanceof ApiError ? `Failed (${e.status})` : "Network error");
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function saveRating() {
     if (!id) return;
     setBusy("rating");
@@ -251,6 +297,7 @@ export function SubmissionDetail() {
             {submission.splynx_comment_id !== null && <span className="badge success">Splynx ✓</span>}
             {submission.wa_message_id !== null && <span className="badge success">WhatsApp ✓</span>}
             {submission.admin_resolved && <span className="badge success">resolved</span>}
+            {submission.hidden && <span className="badge warn">hidden</span>}
           </div>
         </div>
         <div className="muted" style={{ fontSize: "0.9em" }}>
@@ -276,6 +323,34 @@ export function SubmissionDetail() {
 
       {okMessage && <div className="panel success">{okMessage}</div>}
       {error && <div className="panel danger">{error}</div>}
+
+      {/* Classification (job type) — feeds the Performance dashboard's
+          "Job type breakdown" panel and the Type column in the Recent
+          Submissions table. Edit here when the AI's auto-classification
+          got it wrong. Saves to corrected_summary_json so the original
+          AI output stays preserved. */}
+      <div className="panel stack">
+        <div className="row" style={{ justifyContent: "space-between" }}>
+          <h2 style={{ margin: 0 }}>Classification</h2>
+          <span className="muted" style={{ fontSize: "0.85em" }}>
+            Used by the Performance dashboard's job-type breakdown.
+          </span>
+        </div>
+        <div className="row" style={{ gap: 8, alignItems: "center" }}>
+          <label className="muted">Job type:</label>
+          <select
+            value={summary?.job_type ?? "other"}
+            onChange={(e) => saveJobType(e.target.value)}
+            disabled={busy === "job-type"}
+            style={{ width: "auto", minWidth: 200 }}
+          >
+            {JOB_TYPES.map((t) => (
+              <option key={t.value} value={t.value}>{t.label}</option>
+            ))}
+          </select>
+          {busy === "job-type" && <span className="muted">Saving…</span>}
+        </div>
+      </div>
 
       {/* AI summary editor */}
       <div className="panel stack">
@@ -389,6 +464,22 @@ export function SubmissionDetail() {
           </a>
           <button onClick={toggleResolved} className="secondary" disabled={busy === "resolve"}>
             {submission.admin_resolved ? "Mark unresolved" : "Mark resolved"}
+          </button>
+          <button
+            onClick={toggleHidden}
+            className={submission.hidden ? "secondary" : "danger"}
+            disabled={busy === "hidden"}
+            title={
+              submission.hidden
+                ? "This submission is hidden from the Submissions list and Performance dashboards. Unhide to make it visible again."
+                : "Hide this submission from the Submissions list and all Performance dashboards. Useful for duplicates and typo task IDs. The submission stays in the database."
+            }
+          >
+            {busy === "hidden"
+              ? "Working…"
+              : submission.hidden
+                ? "Unhide submission"
+                : "Hide (duplicate / typo)"}
           </button>
         </div>
       </div>

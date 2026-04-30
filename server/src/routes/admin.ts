@@ -6,9 +6,8 @@ import { makeAuthGuards } from "../lib/auth-guards.js";
 import { getServiceSplynxClient, isSplynxConfigured } from "../splynx/service-client.js";
 import { getDb } from "../db.js";
 import type { AppConfig } from "../config.js";
-import { ExternalSummarySchema, RatingDimensionsSchema } from "../types.js";
+import { ExternalSummarySchema, JobTypeSchema, RatingDimensionsSchema } from "../types.js";
 import { summarize } from "../ai/summarize.js";
-import { generatePdf } from "../pdf/generate.js";
 import { pipelineSendDocument } from "./whatsapp.js";
 import { photoPath, processAndSavePhoto, type SourcePhoto } from "../photos/store.js";
 import { runSubmissionPipeline } from "../pipeline/submit-task.js";
@@ -21,6 +20,12 @@ const ListQuery = z.object({
   q: z.string().optional(),
   cursor: z.coerce.number().int().positive().optional(),
   limit: z.coerce.number().int().min(1).max(100).default(30),
+  // By default the list excludes hidden submissions. Pass include_hidden=1
+  // to see everything including the ones an admin has flagged as
+  // duplicates / typos.
+  include_hidden: z
+    .union([z.boolean(), z.string().transform((s) => s === "1" || s === "true")])
+    .optional(),
 });
 
 export async function registerAdminRoutes(app: FastifyInstance, config: AppConfig): Promise<void> {
@@ -31,10 +36,13 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
   app.get("/admin/submissions", { preHandler: requireAdmin }, async (req, reply) => {
     const parsed = ListQuery.safeParse(req.query);
     if (!parsed.success) return reply.code(400).send({ error: "invalid_query" });
-    const { status, login, q, cursor, limit } = parsed.data;
+    const { status, login, q, cursor, limit, include_hidden } = parsed.data;
 
     const wheres: string[] = [];
     const params: unknown[] = [];
+    if (!include_hidden) {
+      wheres.push("hidden = 0");
+    }
     if (status) {
       wheres.push("status = ?");
       params.push(status);
@@ -58,7 +66,7 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
       .prepare(
         `SELECT s.id, s.task_id, s.app_login, s.source, s.comment, s.summary_json,
                 s.splynx_comment_id, s.wa_message_id, s.status, s.admin_resolved,
-                s.created_at, s.updated_at,
+                s.hidden, s.created_at, s.updated_at,
                 r.ai_score, r.admin_score
          FROM submissions s
          LEFT JOIN submission_ratings r ON r.submission_id = s.id
@@ -77,6 +85,7 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
       wa_message_id: string | null;
       status: string;
       admin_resolved: number;
+      hidden: number;
       created_at: number;
       updated_at: number;
       ai_score: number | null;
@@ -95,6 +104,7 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
       wa_message_id: r.wa_message_id,
       status: r.status,
       admin_resolved: r.admin_resolved === 1,
+      hidden: r.hidden === 1,
       created_at: r.created_at,
       ai_score: r.ai_score,
       admin_score: r.admin_score,
@@ -113,7 +123,7 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
       .prepare(
         `SELECT id, task_id, app_login, splynx_admin_id, source, comment, tech_comment_override,
                 summary_json, corrected_summary_json, splynx_comment_id, splynx_corrected_comment_id,
-                splynx_pdf_file_id, wa_message_id, status, error, admin_resolved,
+                splynx_pdf_file_id, wa_message_id, status, error, admin_resolved, hidden,
                 created_at, updated_at
          FROM submissions WHERE id = ?`,
       )
@@ -135,6 +145,7 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
           status: string;
           error: string | null;
           admin_resolved: number;
+          hidden: number;
           created_at: number;
           updated_at: number;
         }
@@ -167,7 +178,15 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
       created_at: number;
     }>;
 
-    return { submission: { ...sub, admin_resolved: sub.admin_resolved === 1 }, photos, actions };
+    return {
+      submission: {
+        ...sub,
+        admin_resolved: sub.admin_resolved === 1,
+        hidden: sub.hidden === 1,
+      },
+      photos,
+      actions,
+    };
   });
 
   // ---------- EDIT AI SUMMARY (pushes to Splynx via PUT comment) ----------
@@ -375,6 +394,73 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
         recordAdminAction(db, id, "regenerate_summary", { error: msg });
         return reply.code(503).send({ error: "regenerate_failed", detail: msg });
       }
+    },
+  );
+
+  // ---------- EDIT JOB TYPE (admin override of the AI's classification) ----------
+  const JobTypePatchSchema = z.object({ job_type: JobTypeSchema });
+
+  app.patch(
+    "/admin/submissions/:id/job-type",
+    { preHandler: requireAdmin },
+    async (req, reply) => {
+      const id = parseId((req.params as { id: string }).id);
+      if (id === null) return reply.code(400).send({ error: "invalid_id" });
+      const parsed = JobTypePatchSchema.safeParse(req.body);
+      if (!parsed.success) return reply.code(400).send({ error: "invalid_body" });
+
+      const sub = loadSubmission(db, id);
+      if (!sub) return reply.code(404).send({ error: "not_found" });
+
+      // Apply the override to corrected_summary_json (creating it from
+      // summary_json if it doesn't exist yet, so the original AI output is
+      // preserved unchanged in summary_json).
+      const baseJson = sub.corrected_summary_json ?? sub.summary_json;
+      if (!baseJson) {
+        return reply.code(400).send({
+          error: "no_summary",
+          message: "Cannot set job_type before the AI summary has run.",
+        });
+      }
+      const obj = safeParse(baseJson);
+      if (!obj || typeof obj !== "object") {
+        return reply.code(400).send({ error: "stored_summary_malformed" });
+      }
+      const updated = { ...(obj as Record<string, unknown>), job_type: parsed.data.job_type };
+
+      db.prepare(
+        `UPDATE submissions SET corrected_summary_json = ?, updated_at = ? WHERE id = ?`,
+      ).run(JSON.stringify(updated), Date.now(), id);
+
+      recordAdminAction(db, id, "edit_job_type", { job_type: parsed.data.job_type });
+      return { ok: true, job_type: parsed.data.job_type };
+    },
+  );
+
+  // ---------- HIDE / UNHIDE (admin can mark a submission as hidden so it
+  //            disappears from the default Submissions list and from the
+  //            Performance dashboard without losing the audit trail) ----------
+  const HiddenPatchSchema = z.object({ hidden: z.boolean() });
+
+  app.patch(
+    "/admin/submissions/:id/hidden",
+    { preHandler: requireAdmin },
+    async (req, reply) => {
+      const id = parseId((req.params as { id: string }).id);
+      if (id === null) return reply.code(400).send({ error: "invalid_id" });
+      const parsed = HiddenPatchSchema.safeParse(req.body);
+      if (!parsed.success) return reply.code(400).send({ error: "invalid_body" });
+
+      const sub = loadSubmission(db, id);
+      if (!sub) return reply.code(404).send({ error: "not_found" });
+
+      db.prepare(`UPDATE submissions SET hidden = ?, updated_at = ? WHERE id = ?`).run(
+        parsed.data.hidden ? 1 : 0,
+        Date.now(),
+        id,
+      );
+      recordAdminAction(db, id, parsed.data.hidden ? "hide" : "unhide", {});
+      return { ok: true, hidden: parsed.data.hidden };
     },
   );
 
