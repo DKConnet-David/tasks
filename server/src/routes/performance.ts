@@ -3,6 +3,8 @@ import { z } from "zod";
 import { makeAuthGuards } from "../lib/auth-guards.js";
 import { getDb } from "../db.js";
 import type { AppConfig } from "../config.js";
+import { analyzePatterns, type SubmissionInput } from "../ai/patterns.js";
+import { getServiceSplynxClient, isSplynxConfigured } from "../splynx/service-client.js";
 
 /**
  * Tech performance dashboard endpoints — admin-only.
@@ -411,6 +413,239 @@ export async function registerPerformanceRoutes(
       });
     },
   );
+
+  // ---------------------------------------------------------------
+  // GET /admin/performance/techs/:login/patterns?period_start=<unix-ms>
+  // Returns the cached pattern analysis for a calendar month, or null.
+  // ---------------------------------------------------------------
+  app.get(
+    "/admin/performance/techs/:login/patterns",
+    { preHandler: requireAdmin },
+    async (req, reply) => {
+      const { login } = req.params as { login: string };
+      const periodStartMs = Number((req.query as { period_start?: string }).period_start);
+      if (!Number.isFinite(periodStartMs) || periodStartMs <= 0) {
+        return reply.code(400).send({ error: "invalid_period_start" });
+      }
+      const row = db
+        .prepare(
+          `SELECT id, app_login, period_start, period_end, generated_at,
+                  submission_count, strengths_json, issues_json, coaching_json,
+                  summary_text, ai_model
+           FROM tech_patterns
+           WHERE app_login = ? AND period_start = ?`,
+        )
+        .get(login, periodStartMs) as
+        | {
+            id: number;
+            app_login: string;
+            period_start: number;
+            period_end: number;
+            generated_at: number;
+            submission_count: number;
+            strengths_json: string;
+            issues_json: string;
+            coaching_json: string;
+            summary_text: string;
+            ai_model: string | null;
+          }
+        | undefined;
+      if (!row) return reply.send({ pattern: null });
+      return reply.send({
+        pattern: {
+          login: row.app_login,
+          period_start: row.period_start,
+          period_end: row.period_end,
+          generated_at: row.generated_at,
+          submission_count: row.submission_count,
+          strengths: safeParse(row.strengths_json) ?? [],
+          issues: safeParse(row.issues_json) ?? [],
+          coaching: safeParse(row.coaching_json) ?? [],
+          summary: row.summary_text,
+          ai_model: row.ai_model,
+        },
+      });
+    },
+  );
+
+  // ---------------------------------------------------------------
+  // POST /admin/performance/techs/:login/patterns/generate
+  // body: { period_start: <unix-ms> }
+  // Runs analyzePatterns(), upserts to tech_patterns, returns the result.
+  // 503 if Splynx isn't configured (we need task descriptions).
+  // 422 if there are too few submissions to analyse meaningfully.
+  // ---------------------------------------------------------------
+  const GenerateBodySchema = z.object({
+    period_start: z.number().int().positive(),
+  });
+  const MIN_SUBMISSIONS = 3;
+
+  app.post(
+    "/admin/performance/techs/:login/patterns/generate",
+    { preHandler: requireAdmin },
+    async (req, reply) => {
+      const { login } = req.params as { login: string };
+      const parsed = GenerateBodySchema.safeParse(req.body);
+      if (!parsed.success) return reply.code(400).send({ error: "invalid_body" });
+      const periodStartMs = parsed.data.period_start;
+      const periodEndMs = endOfMonth(periodStartMs);
+
+      if (!isSplynxConfigured(config)) {
+        return reply.code(503).send({ error: "splynx_not_configured" });
+      }
+
+      // Pull the period's submissions for this tech with their ratings.
+      const rows = db
+        .prepare(
+          `SELECT s.id AS submission_id, s.task_id, s.created_at,
+                  s.summary_json, s.corrected_summary_json,
+                  r.ai_score, r.ai_rationale,
+                  r.admin_score, r.admin_rationale
+           FROM submissions s
+           LEFT JOIN submission_ratings r ON r.submission_id = s.id
+           WHERE s.app_login = ?
+             AND s.created_at >= ?
+             AND s.created_at < ?
+             AND s.hidden = 0
+           ORDER BY s.created_at ASC`,
+        )
+        .all(login, periodStartMs, periodEndMs) as Array<{
+        submission_id: number;
+        task_id: number;
+        created_at: number;
+        summary_json: string | null;
+        corrected_summary_json: string | null;
+        ai_score: number | null;
+        ai_rationale: string | null;
+        admin_score: number | null;
+        admin_rationale: string | null;
+      }>;
+
+      if (rows.length < MIN_SUBMISSIONS) {
+        return reply.code(422).send({
+          error: "too_few_submissions",
+          message: `Need at least ${MIN_SUBMISSIONS} submissions in this month to analyse meaningfully (found ${rows.length}).`,
+          submission_count: rows.length,
+        });
+      }
+
+      // Fetch the Splynx task title + description for each unique task id.
+      // Cached to a Map so a tech who worked the same task multiple times
+      // doesn't trigger duplicate fetches.
+      const splynx = getServiceSplynxClient(config);
+      const taskCache = new Map<number, { title: string | null; description: string | null }>();
+      for (const r of rows) {
+        if (taskCache.has(r.task_id)) continue;
+        try {
+          const t = await splynx.getTaskRaw(r.task_id);
+          taskCache.set(r.task_id, {
+            title: t.title ?? null,
+            description: t.description ?? null,
+          });
+        } catch {
+          taskCache.set(r.task_id, { title: null, description: null });
+        }
+      }
+
+      // Build the input for the AI call. Prefer corrected summary fields
+      // over raw AI summary since they reflect the operator's edits.
+      const submissions: SubmissionInput[] = rows.map((r) => {
+        const summarySource = r.corrected_summary_json ?? r.summary_json;
+        const summary = (summarySource ? safeParse(summarySource) : null) as
+          | {
+              what_was_done?: string;
+              observations?: string;
+              follow_ups?: string;
+              job_type?: string;
+            }
+          | null;
+        const taskInfo = taskCache.get(r.task_id) ?? { title: null, description: null };
+        return {
+          submission_id: r.submission_id,
+          task_id: r.task_id,
+          task_title: taskInfo.title,
+          task_description: taskInfo.description,
+          created_at: r.created_at,
+          job_type: summary?.job_type ?? "other",
+          summary_what_was_done: summary?.what_was_done ?? null,
+          summary_observations: summary?.observations ?? null,
+          summary_follow_ups: summary?.follow_ups ?? null,
+          ai_score: r.ai_score,
+          ai_rationale: r.ai_rationale,
+          admin_score: r.admin_score,
+          admin_rationale: r.admin_rationale,
+        };
+      });
+
+      let result;
+      try {
+        result = await analyzePatterns({
+          config,
+          appLogin: login,
+          periodStart: periodStartMs,
+          periodEnd: periodEndMs,
+          submissions,
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        req.log.error({ err }, "patterns analyze failed");
+        return reply.code(503).send({ error: "analyze_failed", detail: msg });
+      }
+
+      const now = Date.now();
+      db.prepare(
+        `INSERT INTO tech_patterns (
+           app_login, period_start, period_end, generated_at, submission_count,
+           strengths_json, issues_json, coaching_json, summary_text,
+           raw_response_json, ai_model
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(app_login, period_start) DO UPDATE SET
+           period_end = excluded.period_end,
+           generated_at = excluded.generated_at,
+           submission_count = excluded.submission_count,
+           strengths_json = excluded.strengths_json,
+           issues_json = excluded.issues_json,
+           coaching_json = excluded.coaching_json,
+           summary_text = excluded.summary_text,
+           raw_response_json = excluded.raw_response_json,
+           ai_model = excluded.ai_model`,
+      ).run(
+        login,
+        periodStartMs,
+        periodEndMs,
+        now,
+        rows.length,
+        JSON.stringify(result.strengths),
+        JSON.stringify(result.issues),
+        JSON.stringify(result.coaching),
+        result.summary,
+        JSON.stringify(result),
+        config.CLAUDE_MODEL,
+      );
+
+      return reply.send({
+        pattern: {
+          login,
+          period_start: periodStartMs,
+          period_end: periodEndMs,
+          generated_at: now,
+          submission_count: rows.length,
+          strengths: result.strengths,
+          issues: result.issues,
+          coaching: result.coaching,
+          summary: result.summary,
+          ai_model: config.CLAUDE_MODEL,
+        },
+      });
+    },
+  );
+}
+
+// Calendar end-of-month given a 1st-of-month timestamp (returns first ms of
+// the *next* month, exclusive — paired with `>=` and `<` SQL bounds).
+function endOfMonth(periodStartMs: number): number {
+  const d = new Date(periodStartMs);
+  return new Date(d.getFullYear(), d.getMonth() + 1, 1).getTime();
 }
 
 // ---------- helpers ----------

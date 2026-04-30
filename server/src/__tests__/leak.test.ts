@@ -54,6 +54,26 @@ const summary: ExternalSummary = {
 // formatter output (or the PDF buffer) is unambiguous.
 const RATING_RATIONALE_NEEDLE = "_LEAK_TEST_RATIONALE_canary_phrase_42";
 const ADMIN_NEEDLE = "_LEAK_TEST_ADMIN_canary_42";
+const PATTERN_NEEDLE = "_LEAK_TEST_PATTERN_canary_99";
+
+// Synthetic pattern result mirroring what server/src/ai/patterns.ts
+// produces. Pattern data is admin-only (stored in tech_patterns, served
+// only behind requireAdmin) — this fixture exists purely to assert at
+// runtime that the formatters cannot accidentally include it.
+const pattern = {
+  strengths: [
+    { title: "Strong cable management", evidence: `Cable runs were tidy across all jobs.` },
+  ],
+  issues: [
+    {
+      title: "Missing labelling",
+      evidence: `Admin flagged this with note ${PATTERN_NEEDLE}.`,
+      frequency: "4 of 8 jobs",
+    },
+  ],
+  coaching: [`Ask the tech to ${PATTERN_NEEDLE} on outdoor APs.`],
+  summary: `Overall ${PATTERN_NEEDLE} performance is good.`,
+};
 
 const rating: InternalRating = {
   score: 3,
@@ -136,6 +156,32 @@ describe("rating containment (leak test)", () => {
     expect(caption).not.toContain(rating.rationale);
   });
 
+  it("formatters never include pattern-detection output", () => {
+    // Patterns are admin-only data produced by ai/patterns.ts. The type
+    // firewall already prevents them reaching the formatters at compile
+    // time (formatters only accept ExternalSummary). This is the runtime
+    // backstop: every distinctive string from the synthetic pattern
+    // fixture must be absent from every external formatter's output.
+    const html = formatSplynxComment(summary, "lorenzo", false);
+    const htmlUpdate = formatSplynxComment(summary, "lorenzo", true);
+    const caption = formatWhatsAppCaption(
+      summary,
+      task,
+      "lorenzo",
+      "https://clientzone.dkconnect.co.za",
+    );
+    const allOutputs = [html, htmlUpdate, caption].join("\n");
+
+    expect(allOutputs).not.toContain(PATTERN_NEEDLE);
+    for (const s of pattern.strengths) expect(allOutputs).not.toContain(s.evidence);
+    for (const i of pattern.issues) {
+      expect(allOutputs).not.toContain(i.evidence);
+      expect(allOutputs).not.toContain(i.frequency);
+    }
+    for (const c of pattern.coaching) expect(allOutputs).not.toContain(c);
+    expect(allOutputs).not.toContain(pattern.summary);
+  });
+
   it("PDF buffer never contains rating rationale phrases", async () => {
     const pdf = await generatePdf({
       task,
@@ -148,6 +194,10 @@ describe("rating containment (leak test)", () => {
     const text = pdf.toString("binary");
     expect(text).not.toContain(RATING_RATIONALE_NEEDLE);
     expect(text).not.toContain(ADMIN_NEEDLE);
+    expect(text).not.toContain(PATTERN_NEEDLE);
+    expect(text).not.toContain(pattern.summary);
+    for (const i of pattern.issues) expect(text).not.toContain(i.evidence);
+    for (const c of pattern.coaching) expect(text).not.toContain(c);
   });
 
   it("type firewall: ExternalSummary cannot be cast to InternalRating", () => {

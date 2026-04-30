@@ -123,6 +123,29 @@ function migrate(d: Database.Database): void {
       updated_at INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_techs_login ON techs(login);
+
+    -- Cached output of the per-tech monthly pattern-detection Claude call
+    -- (server/src/ai/patterns.ts). Admin-only data — never reaches PDF /
+    -- WhatsApp / Splynx — see the leak-test for the runtime guarantee.
+    -- UNIQUE(app_login, period_start) means re-running the analysis for
+    -- the same calendar month upserts cleanly.
+    CREATE TABLE IF NOT EXISTS tech_patterns (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      app_login TEXT NOT NULL,
+      period_start INTEGER NOT NULL,
+      period_end INTEGER NOT NULL,
+      generated_at INTEGER NOT NULL,
+      submission_count INTEGER NOT NULL,
+      strengths_json TEXT NOT NULL,
+      issues_json TEXT NOT NULL,
+      coaching_json TEXT NOT NULL,
+      summary_text TEXT NOT NULL,
+      raw_response_json TEXT,
+      ai_model TEXT,
+      UNIQUE (app_login, period_start)
+    );
+    CREATE INDEX IF NOT EXISTS idx_tech_patterns_login
+      ON tech_patterns(app_login, period_start DESC);
   `);
 
   // Idempotent column renames for databases created with the older schema

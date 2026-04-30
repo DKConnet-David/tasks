@@ -146,6 +146,8 @@ export function TechProfile() {
 
       <JobTypeBreakdownPanel data={data} />
 
+      <PatternsPanel login={login ?? ""} period={period} />
+
       <RecentSubmissionsPanel data={data} />
 
       <div className="panel">
@@ -497,6 +499,212 @@ function JobTypeBreakdownPanel({ data }: { data: ProfileResponse }) {
           ))}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+// ---------- Patterns panel (admin-only AI coaching analysis) ----------
+
+interface PatternStrength {
+  title: string;
+  evidence: string;
+}
+interface PatternIssue {
+  title: string;
+  evidence: string;
+  frequency: string;
+}
+interface Pattern {
+  login: string;
+  period_start: number;
+  period_end: number;
+  generated_at: number;
+  submission_count: number;
+  strengths: PatternStrength[];
+  issues: PatternIssue[];
+  coaching: string[];
+  summary: string;
+  ai_model: string | null;
+}
+
+function PatternsPanel({ login, period }: { login: string; period: Period }) {
+  const [pattern, setPattern] = useState<Pattern | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Patterns are scoped to a calendar month. The other periods don't have
+  // sensible month boundaries, so we hide the panel for them.
+  const monthBoundary = useMemo(() => {
+    if (period !== "this_month") return null;
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+  }, [period]);
+
+  useEffect(() => {
+    if (!login || monthBoundary === null) {
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    api
+      .get<{ pattern: Pattern | null }>(
+        `/admin/performance/techs/${encodeURIComponent(login)}/patterns?period_start=${monthBoundary}`,
+      )
+      .then((r) => setPattern(r.pattern))
+      .catch((e: unknown) => {
+        setError(e instanceof ApiError ? `Load failed (${e.status})` : "Network error");
+      })
+      .finally(() => setLoading(false));
+  }, [login, monthBoundary]);
+
+  async function generate() {
+    if (!login || monthBoundary === null) return;
+    if (
+      pattern &&
+      !confirm(
+        "Re-running the analysis will overwrite the existing one for this month. Continue?",
+      )
+    )
+      return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await api.post<{ pattern: Pattern }>(
+        `/admin/performance/techs/${encodeURIComponent(login)}/patterns/generate`,
+        { period_start: monthBoundary },
+      );
+      setPattern(res.pattern);
+    } catch (e: unknown) {
+      if (e instanceof ApiError) {
+        if (e.status === 422) {
+          const body = e.body as { message?: string; submission_count?: number };
+          setError(body.message ?? "Too few submissions for this month.");
+        } else if (e.status === 503) {
+          const body = e.body as { detail?: string };
+          setError(body.detail ?? "Analysis service unavailable.");
+        } else {
+          setError(`Failed (${e.status})`);
+        }
+      } else {
+        setError("Network error");
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (period !== "this_month") {
+    return (
+      <div
+        className="panel stack"
+        style={{ border: "2px dashed var(--c-warn)" }}
+      >
+        <div className="row" style={{ justifyContent: "space-between" }}>
+          <h3 style={{ margin: 0 }}>Patterns</h3>
+          <span className="badge warn">admin-only</span>
+        </div>
+        <p className="muted">
+          Switch the period selector at the bottom to <strong>This month</strong> to use the
+          AI pattern analysis (it operates on calendar-month boundaries).
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="panel stack" style={{ border: "2px dashed var(--c-warn)" }}>
+      <div className="row" style={{ justifyContent: "space-between" }}>
+        <h3 style={{ margin: 0 }}>Patterns</h3>
+        <span className="badge warn">admin-only — never sent externally</span>
+      </div>
+      <p className="muted" style={{ margin: 0, fontSize: "0.9em" }}>
+        AI-summarised strengths, recurring issues, and coaching points across this calendar
+        month's submissions. Uses tech notes, AI ratings, your rating overrides, and Splynx
+        task descriptions as input. Result stays admin-only.
+      </p>
+
+      {loading ? (
+        <p className="muted">Loading…</p>
+      ) : pattern ? (
+        <PatternResultDisplay pattern={pattern} />
+      ) : (
+        <p className="muted">
+          No analysis yet for this month. Click <strong>Generate analysis</strong> to run
+          one. Roughly £0.05 per generation.
+        </p>
+      )}
+
+      {error && <div className="danger">{error}</div>}
+
+      <div className="row" style={{ gap: 8 }}>
+        <button onClick={generate} disabled={busy}>
+          {busy ? "Analysing…" : pattern ? "Re-analyse" : "Generate analysis"}
+        </button>
+        {pattern && (
+          <span className="muted" style={{ fontSize: "0.85em", alignSelf: "center" }}>
+            Generated {new Date(pattern.generated_at).toLocaleString()} from{" "}
+            {pattern.submission_count} submission{pattern.submission_count === 1 ? "" : "s"}
+            {pattern.ai_model ? ` · ${pattern.ai_model}` : ""}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function PatternResultDisplay({ pattern }: { pattern: Pattern }) {
+  return (
+    <div className="stack">
+      <div className="panel" style={{ background: "#0e1a14" }}>
+        <strong>Summary</strong>
+        <p style={{ whiteSpace: "pre-wrap", margin: "4px 0 0" }}>{pattern.summary}</p>
+      </div>
+
+      {pattern.strengths.length > 0 && (
+        <div>
+          <h4 style={{ margin: "8px 0 4px" }}>
+            <span style={{ color: "#3fb950" }}>✓</span> Strengths ({pattern.strengths.length})
+          </h4>
+          <ul style={{ paddingLeft: 20, margin: 0 }}>
+            {pattern.strengths.map((s, i) => (
+              <li key={i} style={{ marginBottom: 6 }}>
+                <strong>{s.title}</strong> <span className="muted">— {s.evidence}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {pattern.issues.length > 0 && (
+        <div>
+          <h4 style={{ margin: "8px 0 4px" }}>
+            <span style={{ color: "#d29922" }}>⚠</span> Issues ({pattern.issues.length})
+          </h4>
+          <ul style={{ paddingLeft: 20, margin: 0 }}>
+            {pattern.issues.map((s, i) => (
+              <li key={i} style={{ marginBottom: 6 }}>
+                <strong>{s.title}</strong> <span className="muted">({s.frequency})</span>
+                <div className="muted" style={{ fontSize: "0.9em" }}>{s.evidence}</div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {pattern.coaching.length > 0 && (
+        <div>
+          <h4 style={{ margin: "8px 0 4px" }}>
+            <span style={{ color: "#2f81f7" }}>→</span> Coaching points ({pattern.coaching.length})
+          </h4>
+          <ul style={{ paddingLeft: 20, margin: 0 }}>
+            {pattern.coaching.map((c, i) => (
+              <li key={i} style={{ marginBottom: 6 }}>{c}</li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   );
 }
