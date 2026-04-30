@@ -25,6 +25,23 @@ export const JobOverviewSchema = z.object({
 });
 export type JobOverview = z.infer<typeof JobOverviewSchema>;
 
+// Closed enum the AI classifies each job into. Drives the "Duration vs
+// benchmark by job type" panel on the tech performance dashboard. New
+// categories must be added in lockstep with the dashboard's category
+// dropdown — keep the list small.
+export const JobTypeSchema = z
+  .enum([
+    "install",
+    "call_out",
+    "upgrade",
+    "cable_replacement",
+    "maintenance",
+    "diagnostic",
+    "other",
+  ])
+  .default("other");
+export type JobType = z.infer<typeof JobTypeSchema>;
+
 export const ExternalSummarySchema = z.object({
   // Short-form fields — used in the WhatsApp caption and Splynx comment
   // body, where prose flows better than bullet lists.
@@ -49,6 +66,11 @@ export const ExternalSummarySchema = z.object({
   photo_descriptions: z.array(z.string()).default([]),
   materials: z.array(z.string()).default([]),
   issues_notes: z.array(z.string()).default([]),
+
+  // AI-classified job type. Drives the per-tech performance dashboard's
+  // "Duration vs Benchmark by job type" panel. Default "other" keeps
+  // legacy submissions parseable.
+  job_type: JobTypeSchema,
 
   // Short slug per photo, for Splynx attachment filenames.
   photo_captions: z.array(z.string()).default([]),

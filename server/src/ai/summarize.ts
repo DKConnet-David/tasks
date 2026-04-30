@@ -36,6 +36,16 @@ STRUCTURED (drive the PDF report):
 - materials: an ARRAY of equipment / materials used (one per item). Include model numbers and pricing where shown. Examples: "LiteBeam 5AC outdoor antenna (LBAC 23-FTUA)", "Reyee EW300-PRO router (R 500.00)", "Pole mounting hardware".
 - issues_notes: an ARRAY of any issues encountered, deviations, or notable observations. Examples: "Client not on site during completion", "Client told people on the yard where technician mounted router". Empty array if there's nothing remarkable.
 
+- job_type: classify the job into ONE of these categories. Pick the best fit:
+  - "install"            new wireless / fibre install at a new client site
+  - "call_out"           reactive support visit to fix something for an existing client (slow, no link, equipment fault)
+  - "upgrade"            existing client moves to better hardware / faster package
+  - "cable_replacement"  repairing or replacing damaged / aged cable runs
+  - "maintenance"        scheduled preventative work (firmware, cleanup, audits)
+  - "diagnostic"         purely investigative visit, no work performed
+  - "other"              genuinely doesn't fit any of the above
+  Decide from the task title, description, and photos. If genuinely ambiguous between two, prefer the more specific one over "other".
+
 CRITICAL: photo_descriptions MUST contain exactly the same number of entries as the number of photos provided. Never short the array — if a photo is unclear, write what you can see ("Equipment closeup, content unclear") rather than skipping it.
 
 Reason from the photos and the tech's notes; the Splynx task description is supplementary context (it describes what was scheduled, not necessarily what happened).`;
@@ -119,6 +129,18 @@ export async function summarize(args: SummarizeArgs): Promise<ExternalSummary> {
             photo_descriptions: { type: "array", items: { type: "string" } },
             materials: { type: "array", items: { type: "string" } },
             issues_notes: { type: "array", items: { type: "string" } },
+            job_type: {
+              type: "string",
+              enum: [
+                "install",
+                "call_out",
+                "upgrade",
+                "cable_replacement",
+                "maintenance",
+                "diagnostic",
+                "other",
+              ],
+            },
           },
           required: [
             "headline",
@@ -130,6 +152,7 @@ export async function summarize(args: SummarizeArgs): Promise<ExternalSummary> {
             "photo_descriptions",
             "materials",
             "issues_notes",
+            "job_type",
           ],
         },
       },

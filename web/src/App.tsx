@@ -10,6 +10,8 @@ import { SubmissionDetail } from "./pages/admin/SubmissionDetail";
 import { ManualSubmit } from "./pages/admin/ManualSubmit";
 import { WhatsAppPanel } from "./pages/admin/WhatsAppPanel";
 import { TechsPage } from "./pages/admin/TechsPage";
+import { Performance } from "./pages/admin/Performance";
+import { TechProfile } from "./pages/admin/TechProfile";
 
 export function App() {
   return (
@@ -27,6 +29,8 @@ export function App() {
           <Route path="manual" element={<ManualSubmit />} />
           <Route path="whatsapp" element={<WhatsAppPanel />} />
           <Route path="techs" element={<TechsPage />} />
+          <Route path="performance" element={<Performance />} />
+          <Route path="performance/:login" element={<TechProfile />} />
         </Route>
 
         <Route path="*" element={<Navigate to="/" replace />} />

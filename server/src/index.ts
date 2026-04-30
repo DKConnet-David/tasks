@@ -7,6 +7,7 @@ import { registerAuthRoutes } from "./routes/auth.js";
 import { registerTaskRoutes } from "./routes/tasks.js";
 import { registerWhatsAppRoutes } from "./routes/whatsapp.js";
 import { registerAdminRoutes } from "./routes/admin.js";
+import { registerPerformanceRoutes } from "./routes/performance.js";
 import { start as startBaileys } from "./whatsapp/baileys.js";
 
 async function main() {
@@ -47,6 +48,7 @@ async function main() {
       await registerTaskRoutes(api, config);
       await registerWhatsAppRoutes(api, config);
       await registerAdminRoutes(api, config);
+      await registerPerformanceRoutes(api, config);
     },
     { prefix: "/api" },
   );

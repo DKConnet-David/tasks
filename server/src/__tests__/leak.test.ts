@@ -43,6 +43,7 @@ const summary: ExternalSummary = {
   ],
   materials: ["Reyee EW3000GX router"],
   issues_notes: ["No issues encountered"],
+  job_type: "call_out",
   photo_captions: [
     "router-before-replacement",
     "ew3000gx-powered-up",
@@ -113,12 +114,14 @@ describe("rating containment (leak test)", () => {
     const html = formatSplynxComment(summary, "lorenzo", false);
     expect(html).not.toContain(RATING_RATIONALE_NEEDLE);
     expect(html).not.toContain(ADMIN_NEEDLE);
+    expect(html).not.toContain(rating.rationale);
   });
 
   it("Splynx comment HTML (admin update variant) never includes rating data", () => {
     const html = formatSplynxComment(summary, "lorenzo", true);
     expect(html).not.toContain(RATING_RATIONALE_NEEDLE);
     expect(html).not.toContain(ADMIN_NEEDLE);
+    expect(html).not.toContain(rating.rationale);
   });
 
   it("WhatsApp caption never includes rating rationale phrases", () => {
@@ -130,6 +133,7 @@ describe("rating containment (leak test)", () => {
     );
     expect(caption).not.toContain(RATING_RATIONALE_NEEDLE);
     expect(caption).not.toContain(ADMIN_NEEDLE);
+    expect(caption).not.toContain(rating.rationale);
   });
 
   it("PDF buffer never contains rating rationale phrases", async () => {
