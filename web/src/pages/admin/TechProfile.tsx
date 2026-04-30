@@ -69,6 +69,7 @@ interface ProfileResponse {
   jobs_per_active_day: number;
   active_days?: number;
   job_type_breakdown: Record<string, { count: number; avg_score: number | null }>;
+  submission_timestamps_ms?: number[];
   recent_submissions: RecentSubmission[];
 }
 
@@ -405,7 +406,7 @@ function ScoreDistributionPanel({ data }: { data: ProfileResponse }) {
 }
 
 function ActivityHeatmapPanel({ data }: { data: ProfileResponse; period: Period }) {
-  const [view, setView] = useState<"week" | "month">("month");
+  const [view, setView] = useState<"day" | "week" | "month">("month");
   const cells = data.activity_heatmap;
 
   // Map sparse API data → dense lookup keyed by "YYYY-MM-DD".
@@ -434,6 +435,13 @@ function ActivityHeatmapPanel({ data }: { data: ProfileResponse; period: Period 
           <h3 style={{ margin: 0 }}>Activity heatmap</h3>
           <div className="row" style={{ gap: 4 }}>
             <button
+              onClick={() => setView("day")}
+              className={view === "day" ? "" : "secondary"}
+              style={{ padding: "4px 10px", fontSize: "0.85em" }}
+            >
+              Day
+            </button>
+            <button
               onClick={() => setView("week")}
               className={view === "week" ? "" : "secondary"}
               style={{ padding: "4px 10px", fontSize: "0.85em" }}
@@ -454,7 +462,9 @@ function ActivityHeatmapPanel({ data }: { data: ProfileResponse; period: Period 
         </span>
       </div>
 
-      {view === "month" ? (
+      {view === "day" ? (
+        <DayHeatmap timestamps={data.submission_timestamps_ms ?? []} countByDate={countByDate} />
+      ) : view === "month" ? (
         <MonthHeatmap countByDate={countByDate} maxCount={maxCount} />
       ) : (
         <WeekHeatmap countByDate={countByDate} maxCount={maxCount} />
@@ -464,6 +474,168 @@ function ActivityHeatmapPanel({ data }: { data: ProfileResponse; period: Period 
 }
 
 const WEEKDAY_HEADERS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+/**
+ * Single-day breakdown: hours 7am-10pm in a horizontal strip. Date picker
+ * to select the day; defaults to the most recent day with submissions.
+ * Hours are local time (Africa/Johannesburg per the api container's TZ
+ * env var; if a tech submits late evening that's where it lands).
+ */
+const DAY_VIEW_START_HOUR = 7;
+const DAY_VIEW_END_HOUR = 22;
+const DAY_VIEW_HOURS = Array.from(
+  { length: DAY_VIEW_END_HOUR - DAY_VIEW_START_HOUR + 1 },
+  (_, i) => DAY_VIEW_START_HOUR + i,
+);
+
+function DayHeatmap({
+  timestamps,
+  countByDate,
+}: {
+  timestamps: number[];
+  countByDate: Map<string, number>;
+}) {
+  // Default to the most recent active day (latest date with at least one
+  // submission), or today if there are none.
+  const activeDates = useMemo(() => Array.from(countByDate.keys()).sort(), [countByDate]);
+  const defaultDate =
+    activeDates.length > 0
+      ? activeDates[activeDates.length - 1]!
+      : ymd(new Date().getFullYear(), new Date().getMonth(), new Date().getDate());
+
+  const [selectedDate, setSelectedDate] = useState<string>(defaultDate);
+
+  // Bucket the timestamps into per-hour counts for the chosen day.
+  const { hourCounts, dayTotal, outOfHoursTotal } = useMemo(() => {
+    const counts = new Map<number, number>();
+    let inWindow = 0;
+    let outside = 0;
+    for (const ts of timestamps) {
+      const d = new Date(ts);
+      const dateStr = ymd(d.getFullYear(), d.getMonth(), d.getDate());
+      if (dateStr !== selectedDate) continue;
+      const h = d.getHours();
+      counts.set(h, (counts.get(h) ?? 0) + 1);
+      if (h >= DAY_VIEW_START_HOUR && h <= DAY_VIEW_END_HOUR) inWindow += 1;
+      else outside += 1;
+    }
+    return {
+      hourCounts: counts,
+      dayTotal: inWindow + outside,
+      outOfHoursTotal: outside,
+    };
+  }, [timestamps, selectedDate]);
+
+  const maxHourCount = Math.max(
+    1,
+    ...DAY_VIEW_HOURS.map((h) => hourCounts.get(h) ?? 0),
+  );
+
+  // Step buttons cycle through dates that have any submissions; falls back
+  // to ±1 day when the picker is on an empty day.
+  function step(delta: number) {
+    if (activeDates.length === 0) {
+      const d = new Date(selectedDate + "T00:00:00");
+      d.setDate(d.getDate() + delta);
+      setSelectedDate(ymd(d.getFullYear(), d.getMonth(), d.getDate()));
+      return;
+    }
+    const idx = activeDates.indexOf(selectedDate);
+    if (idx === -1) {
+      // Not on an active day — snap to nearest in the requested direction.
+      const sorted = [...activeDates];
+      const next = delta > 0
+        ? sorted.find((d) => d > selectedDate)
+        : [...sorted].reverse().find((d) => d < selectedDate);
+      if (next) setSelectedDate(next);
+      return;
+    }
+    const target = activeDates[Math.max(0, Math.min(activeDates.length - 1, idx + delta))];
+    if (target) setSelectedDate(target);
+  }
+
+  return (
+    <div className="stack" style={{ gap: 8 }}>
+      <div className="row" style={{ gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        <button
+          className="secondary"
+          onClick={() => step(-1)}
+          style={{ padding: "4px 10px" }}
+          title="Previous active day"
+        >
+          ←
+        </button>
+        <input
+          type="date"
+          value={selectedDate}
+          onChange={(e) => setSelectedDate(e.target.value)}
+          style={{ width: "auto", padding: "4px 8px" }}
+        />
+        <button
+          className="secondary"
+          onClick={() => step(1)}
+          style={{ padding: "4px 10px" }}
+          title="Next active day"
+        >
+          →
+        </button>
+        <span className="muted" style={{ fontSize: "0.85em" }}>
+          {dayTotal} submission{dayTotal === 1 ? "" : "s"} this day
+          {outOfHoursTotal > 0 && (
+            <> · {outOfHoursTotal} outside 7am–10pm window</>
+          )}
+        </span>
+      </div>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: `repeat(${DAY_VIEW_HOURS.length}, minmax(0, 1fr))`,
+          gap: 4,
+        }}
+      >
+        {DAY_VIEW_HOURS.map((h) => (
+          <div
+            key={`label-${h}`}
+            className="muted"
+            style={{ fontSize: "0.7em", textAlign: "center" }}
+          >
+            {formatHourLabel(h)}
+          </div>
+        ))}
+        {DAY_VIEW_HOURS.map((h) => {
+          const count = hourCounts.get(h) ?? 0;
+          return (
+            <div
+              key={`cell-${h}`}
+              title={`${selectedDate} ${formatHourLabel(h)}: ${count} submission${count === 1 ? "" : "s"}`}
+              style={{
+                height: 56,
+                borderRadius: 4,
+                background: count > 0 ? heatColor(count, maxHourCount) : "#161b22",
+                border: "1px solid #1f242b",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: "0.95em",
+                fontWeight: 600,
+                color: count > maxHourCount * 0.5 ? "#0e1116" : "#e6edf3",
+              }}
+            >
+              {count > 0 ? count : ""}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function formatHourLabel(h: number): string {
+  if (h === 0) return "12am";
+  if (h < 12) return `${h}am`;
+  if (h === 12) return "12pm";
+  return `${h - 12}pm`;
+}
 
 /**
  * Standard calendar month grid: 7 columns Mon-Sun, weeks as rows.

@@ -407,6 +407,11 @@ export async function registerPerformanceRoutes(
         jobs_per_active_day: jobsPerActiveDay,
         active_days: activeDays,
         job_type_breakdown: jobTypeBreakdown,
+        // Raw submission timestamps in the period (sorted ascending). The
+        // frontend's "Day" heatmap view buckets these by hour so we don't
+        // need a separate hourly-aggregation endpoint. Just numbers, so
+        // even hundreds of entries weigh next to nothing.
+        submission_timestamps_ms: rows.map((r) => r.created_at),
         // Most recent first, capped to 20 — full list available via the
         // existing /admin/submissions endpoint with login filter.
         recent_submissions: recent.slice(-20).reverse(),
