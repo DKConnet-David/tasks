@@ -46,14 +46,42 @@ services:
 
   web:
     build: ./web
-    # Single public port — nginx in this container serves the PWA and
-    # reverse-proxies /api/* and /health to the api service over the
-    # internal Docker network. The api service is not exposed.
-    ports:
-      - "9090:80"
+    # Internal-only now. The Caddy sidecar below terminates TLS on the
+    # host's :9090 and reverse-proxies to web:80 over the internal Docker
+    # network. nginx inside this container still serves the PWA and
+    # reverse-proxies /api/* /health to the api service.
+    expose:
+      - "80"
     restart: unless-stopped
     depends_on:
       - api
 
+  caddy:
+    # Custom image: caddy:2-alpine + the rfc2136 DNS plugin (built via
+    # xcaddy in caddy/Dockerfile). DNS-01 challenge is the only viable
+    # ACME path here — port 80 is closed inbound and the public port is
+    # 9090, not 443.
+    build: ./caddy
+    restart: unless-stopped
+    environment:
+      ACME_TSIG_KEYNAME: ${ACME_TSIG_KEYNAME}
+      ACME_TSIG_SECRET:  ${ACME_TSIG_SECRET}
+      ACME_DNS_SERVER:   ${ACME_DNS_SERVER}
+      ACME_EMAIL:        ${ACME_EMAIL}
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - web
+
 volumes:
   data: {}
+  # Cert + ACME account state. Critical that this persists across
+  # redeploys — losing it forces re-issuance from scratch and bumps
+  # against Let's Encrypt's "50 certs per registered domain per week"
+  # rate limit.
+  caddy_data: {}
+  caddy_config: {}

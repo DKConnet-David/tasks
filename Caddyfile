@@ -1,0 +1,45 @@
+# Caddy config — fronts the Task Updater stack on port 9090 with a Let's
+# Encrypt cert acquired via DNS-01 (no inbound port 80/443 needed).
+#
+# Cert issuance flow at first boot:
+#   1. Caddy → SimpleDNS Plus (RFC 2136 dynamic update with TSIG key)
+#         publishes _acme-challenge.tasks.dk.net.za TXT record
+#   2. Caddy → Let's Encrypt (HTTPS outbound)
+#         requests cert, LE verifies TXT record over DNS
+#   3. Caddy receives cert, stores in /data (caddy_data volume)
+#   4. Caddy serves https://tasks.dk.net.za:9090
+#
+# All four ACME_* env vars are passed through from Coolify via
+# docker-compose.yml.
+
+{
+    acme_dns rfc2136 {
+        key_name "{$ACME_TSIG_KEYNAME}"
+        key_alg  "hmac-sha256"
+        key      "{$ACME_TSIG_SECRET}"
+        server   "{$ACME_DNS_SERVER}:53"
+    }
+    email {$ACME_EMAIL}
+}
+
+tasks.dk.net.za:9090 {
+    reverse_proxy web:80
+
+    encode zstd gzip
+
+    log {
+        output stdout
+        format console
+    }
+}
+
+# To add another site later, drop in another block here.
+# Each gets its own Let's Encrypt cert automatically.
+# Example:
+#   billing.dk.net.za:9091 {
+#       reverse_proxy billing-app:80
+#   }
+# Then also: open inbound 9091 in the firewall, add "9091:9091" to the
+# caddy service's `ports:` list in docker-compose.yml, and ensure the
+# SimpleDNS Plus update policy allows TXT writes under
+# _acme-challenge.billing.dk.net.za with the same TSIG key.
