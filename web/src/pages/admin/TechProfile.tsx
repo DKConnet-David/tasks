@@ -404,10 +404,16 @@ function ScoreDistributionPanel({ data }: { data: ProfileResponse }) {
   );
 }
 
-function ActivityHeatmapPanel({ data, period }: { data: ProfileResponse; period: Period }) {
-  // Render a calendar-style grid of days. Different period → different shape.
-  // For simplicity render as a flat date list with cells coloured by count.
+function ActivityHeatmapPanel({ data }: { data: ProfileResponse; period: Period }) {
+  const [view, setView] = useState<"week" | "month">("month");
   const cells = data.activity_heatmap;
+
+  // Map sparse API data → dense lookup keyed by "YYYY-MM-DD".
+  const countByDate = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const c of cells) m.set(c.date, c.count);
+    return m;
+  }, [cells]);
 
   if (cells.length === 0) {
     return (
@@ -423,46 +429,230 @@ function ActivityHeatmapPanel({ data, period }: { data: ProfileResponse; period:
 
   return (
     <div className="panel stack">
-      <div className="row" style={{ justifyContent: "space-between" }}>
-        <h3 style={{ margin: 0 }}>Activity heatmap</h3>
-        <span className="muted" style={{ fontSize: "0.85em" }}>{stats}</span>
-      </div>
-      <div
-        style={{
-          display: "flex",
-          gap: 4,
-          flexWrap: "wrap",
-        }}
-      >
-        {cells.map((c) => (
-          <div
-            key={c.date}
-            title={`${c.date}: ${c.count} submission${c.count === 1 ? "" : "s"} (${weekdayName(c.weekday)})`}
-            style={{
-              width: 28,
-              height: 28,
-              borderRadius: 4,
-              background: heatColor(c.count, maxCount),
-              border: "1px solid #1f242b",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              fontSize: "0.7em",
-              color: c.count > maxCount * 0.5 ? "#0e1116" : "#e6edf3",
-              fontWeight: 500,
-            }}
-          >
-            {c.count}
+      <div className="row" style={{ justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+        <div className="row" style={{ gap: 8, alignItems: "center" }}>
+          <h3 style={{ margin: 0 }}>Activity heatmap</h3>
+          <div className="row" style={{ gap: 4 }}>
+            <button
+              onClick={() => setView("week")}
+              className={view === "week" ? "" : "secondary"}
+              style={{ padding: "4px 10px", fontSize: "0.85em" }}
+            >
+              Week
+            </button>
+            <button
+              onClick={() => setView("month")}
+              className={view === "month" ? "" : "secondary"}
+              style={{ padding: "4px 10px", fontSize: "0.85em" }}
+            >
+              Month
+            </button>
           </div>
-        ))}
-      </div>
-      {period !== "all" && (
-        <div className="muted" style={{ fontSize: "0.8em" }}>
-          Each cell is one day with at least one submission. Hover for the date.
         </div>
+        <span className="muted" style={{ fontSize: "0.85em" }}>
+          {stats}
+        </span>
+      </div>
+
+      {view === "month" ? (
+        <MonthHeatmap countByDate={countByDate} maxCount={maxCount} />
+      ) : (
+        <WeekHeatmap countByDate={countByDate} maxCount={maxCount} />
       )}
     </div>
   );
+}
+
+const WEEKDAY_HEADERS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+/**
+ * Standard calendar month grid: 7 columns Mon-Sun, weeks as rows.
+ * Pads with blank cells before the 1st and after the last day so the grid
+ * is rectangular. Picks the most recent month with activity (or current
+ * month if there's none).
+ */
+function MonthHeatmap({
+  countByDate,
+  maxCount,
+}: {
+  countByDate: Map<string, number>;
+  maxCount: number;
+}) {
+  const dates = Array.from(countByDate.keys()).sort();
+  const ref = dates.length > 0 ? new Date(dates[dates.length - 1]! + "T00:00:00") : new Date();
+  const year = ref.getFullYear();
+  const month = ref.getMonth();
+  const firstOfMonth = new Date(year, month, 1);
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+  // Convert JS getDay (Sun=0..Sat=6) → Mon=0..Sun=6.
+  const leadingBlanks = (firstOfMonth.getDay() + 6) % 7;
+
+  const cells: ({ date: string; count: number } | null)[] = [];
+  for (let i = 0; i < leadingBlanks; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) {
+    const date = ymd(year, month, d);
+    cells.push({ date, count: countByDate.get(date) ?? 0 });
+  }
+  while (cells.length % 7 !== 0) cells.push(null);
+
+  const monthLabel = ref.toLocaleString("en-ZA", { month: "long", year: "numeric" });
+
+  return (
+    <div>
+      <div style={{ marginBottom: 8, fontWeight: 500 }}>{monthLabel}</div>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(7, minmax(0, 1fr))",
+          gap: 4,
+        }}
+      >
+        {WEEKDAY_HEADERS.map((d) => (
+          <div
+            key={d}
+            className="muted"
+            style={{ fontSize: "0.7em", textAlign: "center", textTransform: "uppercase" }}
+          >
+            {d}
+          </div>
+        ))}
+        {cells.map((c, i) => (
+          <HeatCell key={i} cell={c} maxCount={maxCount} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Multi-week view: most recent 4 weeks (Mon-Sun) stacked vertically. The
+ * leftmost label on each row shows the Monday's date so it's easy to
+ * locate a specific week.
+ */
+function WeekHeatmap({
+  countByDate,
+  maxCount,
+}: {
+  countByDate: Map<string, number>;
+  maxCount: number;
+}) {
+  const today = new Date();
+  const dowMon0 = (today.getDay() + 6) % 7;
+  const thisMonday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - dowMon0);
+
+  const WEEKS_TO_SHOW = 4;
+  const weeks: { mondayLabel: string; days: { date: string; count: number }[] }[] = [];
+  for (let w = WEEKS_TO_SHOW - 1; w >= 0; w--) {
+    const monday = new Date(thisMonday);
+    monday.setDate(thisMonday.getDate() - w * 7);
+    const days: { date: string; count: number }[] = [];
+    for (let d = 0; d < 7; d++) {
+      const day = new Date(monday);
+      day.setDate(monday.getDate() + d);
+      const date = ymd(day.getFullYear(), day.getMonth(), day.getDate());
+      days.push({ date, count: countByDate.get(date) ?? 0 });
+    }
+    weeks.push({
+      mondayLabel: monday.toLocaleDateString("en-ZA", { day: "numeric", month: "short" }),
+      days,
+    });
+  }
+
+  return (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "min-content repeat(7, minmax(0, 1fr))",
+        gap: 4,
+        alignItems: "center",
+      }}
+    >
+      <div></div>
+      {WEEKDAY_HEADERS.map((d) => (
+        <div
+          key={d}
+          className="muted"
+          style={{ fontSize: "0.7em", textAlign: "center", textTransform: "uppercase" }}
+        >
+          {d}
+        </div>
+      ))}
+      {weeks.map((week) => (
+        <WeekRow key={week.days[0]!.date} mondayLabel={week.mondayLabel} days={week.days} maxCount={maxCount} />
+      ))}
+    </div>
+  );
+}
+
+function WeekRow({
+  mondayLabel,
+  days,
+  maxCount,
+}: {
+  mondayLabel: string;
+  days: { date: string; count: number }[];
+  maxCount: number;
+}) {
+  return (
+    <>
+      <div
+        className="muted"
+        style={{ fontSize: "0.7em", paddingRight: 8, whiteSpace: "nowrap" }}
+      >
+        {mondayLabel}
+      </div>
+      {days.map((d) => (
+        <HeatCell key={d.date} cell={d} maxCount={maxCount} />
+      ))}
+    </>
+  );
+}
+
+function HeatCell({
+  cell,
+  maxCount,
+}: {
+  cell: { date: string; count: number } | null;
+  maxCount: number;
+}) {
+  if (!cell) {
+    return <div style={{ height: 40, background: "transparent" }} />;
+  }
+  const dayNum = Number(cell.date.slice(8, 10));
+  const today = new Date();
+  const isToday =
+    cell.date === ymd(today.getFullYear(), today.getMonth(), today.getDate());
+  const isFuture = new Date(cell.date + "T00:00:00") > today;
+  return (
+    <div
+      title={`${cell.date}: ${cell.count} submission${cell.count === 1 ? "" : "s"}`}
+      style={{
+        height: 40,
+        borderRadius: 4,
+        background: cell.count > 0 ? heatColor(cell.count, maxCount) : "#161b22",
+        border: isToday ? "1px solid #2f81f7" : "1px solid #1f242b",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        fontSize: "0.7em",
+        color: cell.count > maxCount * 0.5 ? "#0e1116" : "#e6edf3",
+        opacity: isFuture ? 0.35 : 1,
+        position: "relative",
+      }}
+    >
+      <span style={{ fontSize: "0.75em", opacity: 0.6, lineHeight: 1 }}>{dayNum}</span>
+      {cell.count > 0 && (
+        <span style={{ fontWeight: 600, lineHeight: 1.2 }}>{cell.count}</span>
+      )}
+    </div>
+  );
+}
+
+function ymd(year: number, monthZeroBased: number, day: number): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${year}-${pad(monthZeroBased + 1)}-${pad(day)}`;
 }
 
 function JobTypeBreakdownPanel({ data }: { data: ProfileResponse }) {
@@ -777,10 +967,6 @@ function heatColor(count: number, max: number): string {
   const hi = 63;
   const pct = lo + (hi - lo) * t;
   return `hsl(135deg ${50 + 20 * t}% ${pct}%)`;
-}
-
-function weekdayName(d: number): string {
-  return ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d] ?? "";
 }
 
 function prettyType(t: string): string {
