@@ -242,7 +242,7 @@ function DimensionBar({ label, value }: { label: string; value: number }) {
       <div
         style={{
           height: 8,
-          background: "#1f242b",
+          background: "#1a2029",
           borderRadius: 4,
           overflow: "hidden",
           marginTop: 4,
@@ -293,10 +293,11 @@ function ConsistencyChip({ label, entry }: { label: string; entry: ConsistencyEn
   return (
     <div
       style={{
-        background: "#0e1a14",
-        border: "1px solid var(--c-border)",
+        background: "#1a2029",
+        border: "none",
         borderRadius: "var(--r)",
         padding: 8,
+        boxShadow: "0 1px 2px rgba(0,0,0,0.4)",
       }}
     >
       <div className="muted" style={{ fontSize: "0.7em", textTransform: "uppercase" }}>
@@ -344,19 +345,24 @@ function ScoreTrendsPanel({ data }: { data: ProfileResponse }) {
       <div style={{ width: "100%", height: 260 }}>
         <ResponsiveContainer>
           <LineChart data={chartData}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#2a2f36" />
+            <CartesianGrid strokeDasharray="3 3" stroke="#232a33" />
             <XAxis dataKey="date" stroke="#8b949e" tick={{ fontSize: 11 }} />
             <YAxis domain={[0, 10]} stroke="#8b949e" tick={{ fontSize: 11 }} />
             <Tooltip
-              contentStyle={{ background: "#161b22", border: "1px solid #30363d" }}
+              contentStyle={{
+                background: "#1a2029",
+                border: "1px solid #232a33",
+                borderRadius: 8,
+                boxShadow: "0 8px 24px rgba(0,0,0,0.55)",
+              }}
               labelStyle={{ color: "#e6edf3" }}
             />
             <Legend wrapperStyle={{ fontSize: "0.85em" }} />
             <Line type="monotone" dataKey="overall" stroke="#a371f7" strokeWidth={2} dot />
-            <Line type="monotone" dataKey="workmanship" stroke="#3fb950" dot={false} />
-            <Line type="monotone" dataKey="photo_quality" stroke="#2f81f7" dot={false} />
-            <Line type="monotone" dataKey="completeness" stroke="#d29922" dot={false} />
-            <Line type="monotone" dataKey="communication" stroke="#db61a2" dot={false} />
+            <Line type="monotone" dataKey="workmanship" stroke="#56d364" dot={false} />
+            <Line type="monotone" dataKey="photo_quality" stroke="#79c0ff" dot={false} />
+            <Line type="monotone" dataKey="completeness" stroke="#e3b341" dot={false} />
+            <Line type="monotone" dataKey="communication" stroke="#ff7b72" dot={false} />
           </LineChart>
         </ResponsiveContainer>
       </div>
@@ -377,9 +383,9 @@ function ScoreDistributionPanel({ data }: { data: ProfileResponse }) {
   }
 
   const chart = [
-    { name: "Excellent (8–10)", value: d.excellent, fill: "#3fb950" },
-    { name: "Good (5–7)", value: d.good, fill: "#d29922" },
-    { name: "Needs Improvement (<5)", value: d.needs_improvement, fill: "#f85149" },
+    { name: "Excellent (8–10)", value: d.excellent, fill: "#56d364" },
+    { name: "Good (5–7)", value: d.good, fill: "#e3b341" },
+    { name: "Needs Improvement (<5)", value: d.needs_improvement, fill: "#ff7b72" },
   ];
 
   return (
@@ -399,7 +405,14 @@ function ScoreDistributionPanel({ data }: { data: ProfileResponse }) {
             />
             {/* Per-slice fill is read off the `fill` property on each data
                 item — Cell was deprecated in recharts 3.x. */}
-            <Tooltip contentStyle={{ background: "#161b22", border: "1px solid #30363d" }} />
+            <Tooltip
+              contentStyle={{
+                background: "#1a2029",
+                border: "1px solid #232a33",
+                borderRadius: 8,
+                boxShadow: "0 8px 24px rgba(0,0,0,0.55)",
+              }}
+            />
             <Legend wrapperStyle={{ fontSize: "0.85em" }} />
           </PieChart>
         </ResponsiveContainer>
@@ -714,14 +727,14 @@ function DayRow({
             style={{
               height: 28,
               borderRadius: 4,
-              background: count > 0 ? heatColor(count, maxCellCount) : "#161b22",
-              border: isToday ? "1px solid #2f81f7" : "1px solid #1f242b",
+              background: count > 0 ? heatColor(count, maxCellCount) : "#13181f",
+              border: isToday ? "1px solid #2f81f7" : "1px solid #232a33",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
               fontSize: "0.75em",
               fontWeight: 600,
-              color: count > maxCellCount * 0.5 ? "#0e1116" : "#e6edf3",
+              color: count > maxCellCount * 0.5 ? "#0a0d12" : "#e6edf3",
               opacity: isFuture ? 0.4 : 1,
             }}
           >
@@ -905,14 +918,14 @@ function HeatCell({
       style={{
         height: 40,
         borderRadius: 4,
-        background: cell.count > 0 ? heatColor(cell.count, maxCount) : "#161b22",
-        border: isToday ? "1px solid #2f81f7" : "1px solid #1f242b",
+        background: cell.count > 0 ? heatColor(cell.count, maxCount) : "#13181f",
+        border: isToday ? "1px solid #2f81f7" : "1px solid #232a33",
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
         justifyContent: "center",
         fontSize: "0.7em",
-        color: cell.count > maxCount * 0.5 ? "#0e1116" : "#e6edf3",
+        color: cell.count > maxCount * 0.5 ? "#0a0d12" : "#e6edf3",
         opacity: isFuture ? 0.35 : 1,
         position: "relative",
       }}
@@ -1122,7 +1135,7 @@ function PatternsPanel({ login, period }: { login: string; period: Period }) {
 function PatternResultDisplay({ pattern }: { pattern: Pattern }) {
   return (
     <div className="stack">
-      <div className="panel" style={{ background: "#0e1a14" }}>
+      <div className="panel elevated">
         <strong>Summary</strong>
         <p style={{ whiteSpace: "pre-wrap", margin: "4px 0 0" }}>{pattern.summary}</p>
       </div>
@@ -1130,7 +1143,7 @@ function PatternResultDisplay({ pattern }: { pattern: Pattern }) {
       {pattern.strengths.length > 0 && (
         <div>
           <h4 style={{ margin: "8px 0 4px" }}>
-            <span style={{ color: "#3fb950" }}>✓</span> Strengths ({pattern.strengths.length})
+            <span style={{ color: "#56d364" }}>✓</span> Strengths ({pattern.strengths.length})
           </h4>
           <ul style={{ paddingLeft: 20, margin: 0 }}>
             {pattern.strengths.map((s, i) => (
@@ -1145,7 +1158,7 @@ function PatternResultDisplay({ pattern }: { pattern: Pattern }) {
       {pattern.issues.length > 0 && (
         <div>
           <h4 style={{ margin: "8px 0 4px" }}>
-            <span style={{ color: "#d29922" }}>⚠</span> Issues ({pattern.issues.length})
+            <span style={{ color: "#e3b341" }}>⚠</span> Issues ({pattern.issues.length})
           </h4>
           <ul style={{ paddingLeft: 20, margin: 0 }}>
             {pattern.issues.map((s, i) => (
@@ -1161,7 +1174,7 @@ function PatternResultDisplay({ pattern }: { pattern: Pattern }) {
       {pattern.coaching.length > 0 && (
         <div>
           <h4 style={{ margin: "8px 0 4px" }}>
-            <span style={{ color: "#2f81f7" }}>→</span> Coaching points ({pattern.coaching.length})
+            <span style={{ color: "#79c0ff" }}>→</span> Coaching points ({pattern.coaching.length})
           </h4>
           <ul style={{ paddingLeft: 20, margin: 0 }}>
             {pattern.coaching.map((c, i) => (
@@ -1223,25 +1236,27 @@ function RecentSubmissionsPanel({ data }: { data: ProfileResponse }) {
 // ---------- helpers ----------
 
 function scoreColor(s: number): string {
-  if (s >= 8) return "#3fb950";
-  if (s >= 5) return "#d29922";
-  return "#f85149";
+  if (s >= 8) return "#56d364";
+  if (s >= 5) return "#e3b341";
+  return "#ff7b72";
 }
 
 function scoreColor5(s: number): string {
-  if (s >= 4) return "#3fb950";
-  if (s >= 2.5) return "#d29922";
-  return "#f85149";
+  if (s >= 4) return "#56d364";
+  if (s >= 2.5) return "#e3b341";
+  return "#ff7b72";
 }
 
 function heatColor(count: number, max: number): string {
-  if (count === 0) return "#161b22";
+  if (count === 0) return "#13181f";
+  // Cool-to-warm ramp: low counts read as muted teal, high counts as warm
+  // amber, with the same lightness curve as before so the visual weight
+  // still scales with submission count.
   const t = count / max;
-  // Interpolate dark green → bright green
-  const lo = 18;
-  const hi = 63;
-  const pct = lo + (hi - lo) * t;
-  return `hsl(135deg ${50 + 20 * t}% ${pct}%)`;
+  const hue = 175 - 115 * t; // 175 (teal) → 60 (amber)
+  const sat = 45 + 25 * t;
+  const light = 28 + 22 * t;
+  return `hsl(${hue}deg ${sat}% ${light}%)`;
 }
 
 function prettyType(t: string): string {
