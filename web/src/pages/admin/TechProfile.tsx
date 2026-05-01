@@ -91,7 +91,10 @@ const DIM_KEYS = ["workmanship", "photo_quality", "completeness", "communication
 
 export function TechProfile() {
   const { login } = useParams<{ login: string }>();
-  const [period, setPeriod] = useState<Period>("this_month");
+  // Default to a rolling window rather than calendar-month-to-date, so the
+  // profile doesn't look empty on the 1st of every month before anyone has
+  // submitted. Operator can still pick "This month" for monthly reviews.
+  const [period, setPeriod] = useState<Period>("last_30");
   const [data, setData] = useState<ProfileResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 

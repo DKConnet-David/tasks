@@ -35,7 +35,10 @@ const PERIOD_LABELS: Record<Period, string> = {
 type SortKey = "login" | "jobs" | "score" | "last";
 
 export function Performance() {
-  const [period, setPeriod] = useState<Period>("this_month");
+  // Default to a rolling window rather than calendar-month-to-date, so the
+  // dashboard doesn't look empty on the 1st of every month before anyone
+  // has submitted. Operator can still pick "This month" for monthly reviews.
+  const [period, setPeriod] = useState<Period>("last_30");
   const [data, setData] = useState<OverviewResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [sort, setSort] = useState<{ key: SortKey; desc: boolean }>({ key: "score", desc: true });
