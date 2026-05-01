@@ -479,10 +479,15 @@ function ActivityHeatmapPanel({ data }: { data: ProfileResponse; period: Period 
 const WEEKDAY_HEADERS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 /**
- * Single-day breakdown: hours 7am-10pm in a horizontal strip. Date picker
- * to select the day; defaults to the most recent day with submissions.
- * Hours are local time (Africa/Johannesburg per the api container's TZ
- * env var; if a tech submits late evening that's where it lands).
+ * Week × Hour heatmap: 7 rows (Mon-Sun) × 16 columns (7am-10pm). Lets the
+ * operator spot day-of-week + time-of-day patterns at a single glance —
+ * "never works Wednesdays", "loads up mornings only", "always quits by 4pm",
+ * etc. Defaults to the current week; prev/next/today buttons step through
+ * weeks. Hours outside 7am-10pm are tallied in the caption so out-of-window
+ * submissions stay visible.
+ *
+ * Hours are rendered in the api container's local time (Africa/Johannesburg
+ * per the TZ env var on the api service).
  */
 const DAY_VIEW_START_HOUR = 7;
 const DAY_VIEW_END_HOUR = 22;
@@ -491,145 +496,240 @@ const DAY_VIEW_HOURS = Array.from(
   (_, i) => DAY_VIEW_START_HOUR + i,
 );
 
+function startOfWeek(d: Date): Date {
+  const dowMon0 = (d.getDay() + 6) % 7;
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate() - dowMon0);
+}
+
 function DayHeatmap({
   timestamps,
-  countByDate,
 }: {
   timestamps: number[];
+  // countByDate is unused here but kept in the prop type for symmetry with
+  // the other heatmap views.
   countByDate: Map<string, number>;
 }) {
-  // Default to the most recent active day (latest date with at least one
-  // submission), or today if there are none.
-  const activeDates = useMemo(() => Array.from(countByDate.keys()).sort(), [countByDate]);
-  const defaultDate =
-    activeDates.length > 0
-      ? activeDates[activeDates.length - 1]!
-      : ymd(new Date().getFullYear(), new Date().getMonth(), new Date().getDate());
+  const today = useMemo(() => new Date(), []);
+  const todayKey = ymd(today.getFullYear(), today.getMonth(), today.getDate());
+  const thisWeekMonday = useMemo(() => startOfWeek(today), [today]);
 
-  const [selectedDate, setSelectedDate] = useState<string>(defaultDate);
+  const [weekMonday, setWeekMonday] = useState<Date>(thisWeekMonday);
 
-  // Bucket the timestamps into per-hour counts for the chosen day.
-  const { hourCounts, dayTotal, outOfHoursTotal } = useMemo(() => {
-    const counts = new Map<number, number>();
-    let inWindow = 0;
-    let outside = 0;
+  // Build the 7 day Date objects for the visible week.
+  const days = useMemo(() => {
+    return Array.from({ length: 7 }, (_, i) => {
+      const d = new Date(weekMonday);
+      d.setDate(weekMonday.getDate() + i);
+      return d;
+    });
+  }, [weekMonday]);
+
+  // Bucket timestamps → per-day, per-hour counts.
+  const hourCounts = useMemo(() => {
+    const m = new Map<string, Map<number, number>>();
     for (const ts of timestamps) {
       const d = new Date(ts);
       const dateStr = ymd(d.getFullYear(), d.getMonth(), d.getDate());
-      if (dateStr !== selectedDate) continue;
       const h = d.getHours();
-      counts.set(h, (counts.get(h) ?? 0) + 1);
-      if (h >= DAY_VIEW_START_HOUR && h <= DAY_VIEW_END_HOUR) inWindow += 1;
-      else outside += 1;
+      let dayMap = m.get(dateStr);
+      if (!dayMap) {
+        dayMap = new Map();
+        m.set(dateStr, dayMap);
+      }
+      dayMap.set(h, (dayMap.get(h) ?? 0) + 1);
     }
-    return {
-      hourCounts: counts,
-      dayTotal: inWindow + outside,
-      outOfHoursTotal: outside,
-    };
-  }, [timestamps, selectedDate]);
+    return m;
+  }, [timestamps]);
 
-  const maxHourCount = Math.max(
-    1,
-    ...DAY_VIEW_HOURS.map((h) => hourCounts.get(h) ?? 0),
-  );
+  // Totals for the visible week (in-window vs out-of-window) and the max
+  // single-cell count for colour-scale normalisation.
+  const { weekTotal, outOfWindow, maxCellCount } = useMemo(() => {
+    let total = 0;
+    let outside = 0;
+    let max = 1;
+    for (const day of days) {
+      const dateStr = ymd(day.getFullYear(), day.getMonth(), day.getDate());
+      const dayMap = hourCounts.get(dateStr);
+      if (!dayMap) continue;
+      for (const [h, c] of dayMap) {
+        total += c;
+        if (h < DAY_VIEW_START_HOUR || h > DAY_VIEW_END_HOUR) outside += c;
+        if (h >= DAY_VIEW_START_HOUR && h <= DAY_VIEW_END_HOUR && c > max) max = c;
+      }
+    }
+    return { weekTotal: total, outOfWindow: outside, maxCellCount: max };
+  }, [days, hourCounts]);
 
-  // Step buttons cycle through dates that have any submissions; falls back
-  // to ±1 day when the picker is on an empty day.
-  function step(delta: number) {
-    if (activeDates.length === 0) {
-      const d = new Date(selectedDate + "T00:00:00");
-      d.setDate(d.getDate() + delta);
-      setSelectedDate(ymd(d.getFullYear(), d.getMonth(), d.getDate()));
-      return;
-    }
-    const idx = activeDates.indexOf(selectedDate);
-    if (idx === -1) {
-      // Not on an active day — snap to nearest in the requested direction.
-      const sorted = [...activeDates];
-      const next = delta > 0
-        ? sorted.find((d) => d > selectedDate)
-        : [...sorted].reverse().find((d) => d < selectedDate);
-      if (next) setSelectedDate(next);
-      return;
-    }
-    const target = activeDates[Math.max(0, Math.min(activeDates.length - 1, idx + delta))];
-    if (target) setSelectedDate(target);
+  function stepWeek(delta: number) {
+    const next = new Date(weekMonday);
+    next.setDate(weekMonday.getDate() + delta * 7);
+    setWeekMonday(next);
   }
+
+  const sunday = new Date(weekMonday);
+  sunday.setDate(weekMonday.getDate() + 6);
+  const weekLabel =
+    weekMonday.getMonth() === sunday.getMonth()
+      ? `${weekMonday.toLocaleDateString("en-ZA", { day: "numeric" })} – ${sunday.toLocaleDateString(
+          "en-ZA",
+          { day: "numeric", month: "short", year: "numeric" },
+        )}`
+      : `${weekMonday.toLocaleDateString("en-ZA", { day: "numeric", month: "short" })} – ${sunday.toLocaleDateString(
+          "en-ZA",
+          { day: "numeric", month: "short", year: "numeric" },
+        )}`;
+
+  const isThisWeek = weekMonday.getTime() === thisWeekMonday.getTime();
 
   return (
     <div className="stack" style={{ gap: 8 }}>
       <div className="row" style={{ gap: 8, flexWrap: "wrap", alignItems: "center" }}>
         <button
           className="secondary"
-          onClick={() => step(-1)}
+          onClick={() => stepWeek(-1)}
           style={{ padding: "4px 10px" }}
-          title="Previous active day"
+          title="Previous week"
         >
           ←
         </button>
-        <input
-          type="date"
-          value={selectedDate}
-          onChange={(e) => setSelectedDate(e.target.value)}
-          style={{ width: "auto", padding: "4px 8px" }}
-        />
+        <strong style={{ minWidth: 180, textAlign: "center" }}>{weekLabel}</strong>
         <button
           className="secondary"
-          onClick={() => step(1)}
+          onClick={() => stepWeek(1)}
           style={{ padding: "4px 10px" }}
-          title="Next active day"
+          title="Next week"
         >
           →
         </button>
+        {!isThisWeek && (
+          <button
+            className="secondary"
+            onClick={() => setWeekMonday(thisWeekMonday)}
+            style={{ padding: "4px 10px", fontSize: "0.85em" }}
+          >
+            This week
+          </button>
+        )}
         <span className="muted" style={{ fontSize: "0.85em" }}>
-          {dayTotal} submission{dayTotal === 1 ? "" : "s"} this day
-          {outOfHoursTotal > 0 && (
-            <> · {outOfHoursTotal} outside 7am–10pm window</>
-          )}
+          {weekTotal} submission{weekTotal === 1 ? "" : "s"} this week
+          {outOfWindow > 0 && <> · {outOfWindow} outside 7am–10pm window</>}
         </span>
       </div>
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: `repeat(${DAY_VIEW_HOURS.length}, minmax(0, 1fr))`,
-          gap: 4,
-        }}
-      >
-        {DAY_VIEW_HOURS.map((h) => (
-          <div
-            key={`label-${h}`}
-            className="muted"
-            style={{ fontSize: "0.7em", textAlign: "center" }}
-          >
-            {formatHourLabel(h)}
-          </div>
-        ))}
-        {DAY_VIEW_HOURS.map((h) => {
-          const count = hourCounts.get(h) ?? 0;
-          return (
+
+      <div style={{ overflowX: "auto" }}>
+        <div
+          style={{
+            display: "grid",
+            // First column for the day label, then 16 hour columns.
+            gridTemplateColumns: `min-content repeat(${DAY_VIEW_HOURS.length}, minmax(28px, 1fr))`,
+            gap: 4,
+            minWidth: 720,
+          }}
+        >
+          {/* Header row: blank corner + hour labels */}
+          <div></div>
+          {DAY_VIEW_HOURS.map((h) => (
             <div
-              key={`cell-${h}`}
-              title={`${selectedDate} ${formatHourLabel(h)}: ${count} submission${count === 1 ? "" : "s"}`}
-              style={{
-                height: 56,
-                borderRadius: 4,
-                background: count > 0 ? heatColor(count, maxHourCount) : "#161b22",
-                border: "1px solid #1f242b",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                fontSize: "0.95em",
-                fontWeight: 600,
-                color: count > maxHourCount * 0.5 ? "#0e1116" : "#e6edf3",
-              }}
+              key={`hh-${h}`}
+              className="muted"
+              style={{ fontSize: "0.7em", textAlign: "center", textTransform: "uppercase" }}
             >
-              {count > 0 ? count : ""}
+              {formatHourLabel(h)}
             </div>
-          );
-        })}
+          ))}
+
+          {/* One row per day (Mon-Sun) */}
+          {days.map((day) => {
+            const dateStr = ymd(day.getFullYear(), day.getMonth(), day.getDate());
+            const isToday = dateStr === todayKey;
+            const isFuture = day > today && !isToday;
+            const dayMap = hourCounts.get(dateStr);
+            const dayTotal = dayMap
+              ? Array.from(dayMap.values()).reduce((a, b) => a + b, 0)
+              : 0;
+            return (
+              <DayRow
+                key={dateStr}
+                day={day}
+                dateStr={dateStr}
+                isToday={isToday}
+                isFuture={isFuture}
+                hourMap={dayMap}
+                maxCellCount={maxCellCount}
+                dayTotal={dayTotal}
+              />
+            );
+          })}
+        </div>
       </div>
     </div>
+  );
+}
+
+function DayRow({
+  day,
+  dateStr,
+  isToday,
+  isFuture,
+  hourMap,
+  maxCellCount,
+  dayTotal,
+}: {
+  day: Date;
+  dateStr: string;
+  isToday: boolean;
+  isFuture: boolean;
+  hourMap: Map<number, number> | undefined;
+  maxCellCount: number;
+  dayTotal: number;
+}) {
+  const label = day.toLocaleDateString("en-ZA", {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+  });
+  return (
+    <>
+      <div
+        className="muted"
+        style={{
+          fontSize: "0.75em",
+          paddingRight: 8,
+          whiteSpace: "nowrap",
+          alignSelf: "center",
+          fontWeight: isToday ? 600 : 400,
+          color: isToday ? "var(--c-accent)" : undefined,
+          opacity: isFuture ? 0.5 : 1,
+        }}
+        title={`${label} — ${dayTotal} submission${dayTotal === 1 ? "" : "s"}`}
+      >
+        {label}
+      </div>
+      {DAY_VIEW_HOURS.map((h) => {
+        const count = hourMap?.get(h) ?? 0;
+        return (
+          <div
+            key={`${dateStr}-${h}`}
+            title={`${dateStr} ${formatHourLabel(h)}: ${count} submission${count === 1 ? "" : "s"}`}
+            style={{
+              height: 28,
+              borderRadius: 4,
+              background: count > 0 ? heatColor(count, maxCellCount) : "#161b22",
+              border: isToday ? "1px solid #2f81f7" : "1px solid #1f242b",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              fontSize: "0.75em",
+              fontWeight: 600,
+              color: count > maxCellCount * 0.5 ? "#0e1116" : "#e6edf3",
+              opacity: isFuture ? 0.4 : 1,
+            }}
+          >
+            {count > 0 ? count : ""}
+          </div>
+        );
+      })}
+    </>
   );
 }
 
