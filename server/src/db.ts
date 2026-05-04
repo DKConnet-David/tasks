@@ -177,4 +177,69 @@ function migrate(d: Database.Database): void {
   if (sesCols.has("splynx_login") && !sesCols.has("app_login")) {
     d.exec(`ALTER TABLE sessions RENAME COLUMN splynx_login TO app_login`);
   }
+
+  // 2026-05-04: rating scale migrated from 1–5 to 1–10. Existing scores are
+  // doubled so the meaning of historical ratings (and the few-shot calibration
+  // they provide to the AI) is preserved one-for-one. Idempotent via the
+  // migrations_meta marker — never re-applies on container restart.
+  d.exec(`
+    CREATE TABLE IF NOT EXISTS migrations_meta (
+      key TEXT PRIMARY KEY,
+      applied_at INTEGER NOT NULL
+    );
+  `);
+  const SCORE_MIGRATION_KEY = "scores_1to5_to_1to10";
+  const alreadyApplied = d
+    .prepare(`SELECT 1 FROM migrations_meta WHERE key = ?`)
+    .get(SCORE_MIGRATION_KEY);
+  if (!alreadyApplied) {
+    const tx = d.transaction(() => {
+      d.prepare(`UPDATE submission_ratings SET ai_score = ai_score * 2 WHERE ai_score IS NOT NULL`).run();
+      d.prepare(`UPDATE submission_ratings SET admin_score = admin_score * 2 WHERE admin_score IS NOT NULL`).run();
+
+      const rows = d
+        .prepare(
+          `SELECT id, ai_dimensions_json, admin_dimensions_json FROM submission_ratings`,
+        )
+        .all() as {
+        id: number;
+        ai_dimensions_json: string;
+        admin_dimensions_json: string | null;
+      }[];
+      const updateAi = d.prepare(
+        `UPDATE submission_ratings SET ai_dimensions_json = ? WHERE id = ?`,
+      );
+      const updateAdmin = d.prepare(
+        `UPDATE submission_ratings SET admin_dimensions_json = ? WHERE id = ?`,
+      );
+      for (const r of rows) {
+        const aiDoubled = doubleDimensionsJson(r.ai_dimensions_json);
+        if (aiDoubled !== null) updateAi.run(aiDoubled, r.id);
+        if (r.admin_dimensions_json) {
+          const adminDoubled = doubleDimensionsJson(r.admin_dimensions_json);
+          if (adminDoubled !== null) updateAdmin.run(adminDoubled, r.id);
+        }
+      }
+
+      d.prepare(
+        `INSERT INTO migrations_meta(key, applied_at) VALUES (?, ?)`,
+      ).run(SCORE_MIGRATION_KEY, Date.now());
+    });
+    tx();
+  }
+}
+
+function doubleDimensionsJson(json: string): string | null {
+  try {
+    const obj = JSON.parse(json) as Record<string, unknown>;
+    const out: Record<string, number> = {};
+    for (const k of Object.keys(obj)) {
+      const v = obj[k];
+      if (typeof v !== "number" || !Number.isFinite(v)) return null;
+      out[k] = Math.round(v * 2);
+    }
+    return JSON.stringify(out);
+  } catch {
+    return null;
+  }
 }

@@ -223,7 +223,7 @@ function DimensionsPanel({ data }: { data: ProfileResponse }) {
   const d = data.dimensions;
   return (
     <div className="panel stack">
-      <h3 style={{ margin: 0 }}>Dimensions (avg, scale 1–5)</h3>
+      <h3 style={{ margin: 0 }}>Dimensions (avg, scale 1–10)</h3>
       {DIM_KEYS.map((k) => (
         <DimensionBar key={k} label={DIM_LABELS[k]} value={d[k]} />
       ))}
@@ -232,12 +232,12 @@ function DimensionsPanel({ data }: { data: ProfileResponse }) {
 }
 
 function DimensionBar({ label, value }: { label: string; value: number }) {
-  const pct = Math.max(0, Math.min(100, (value / 5) * 100));
+  const pct = Math.max(0, Math.min(100, (value / 10) * 100));
   return (
     <div>
       <div className="row" style={{ justifyContent: "space-between", fontSize: "0.9em" }}>
         <strong>{label}</strong>
-        <span style={{ color: scoreColor5(value) }}>{value.toFixed(1)} /5</span>
+        <span style={{ color: scoreColor(value) }}>{value.toFixed(1)} /10</span>
       </div>
       <div
         style={{
@@ -252,7 +252,7 @@ function DimensionBar({ label, value }: { label: string; value: number }) {
           style={{
             height: "100%",
             width: `${pct}%`,
-            background: scoreColor5(value),
+            background: scoreColor(value),
             transition: "width 240ms",
           }}
         />
@@ -1238,12 +1238,6 @@ function RecentSubmissionsPanel({ data }: { data: ProfileResponse }) {
 function scoreColor(s: number): string {
   if (s >= 8) return "#56d364";
   if (s >= 5) return "#e3b341";
-  return "#ff7b72";
-}
-
-function scoreColor5(s: number): string {
-  if (s >= 4) return "#56d364";
-  if (s >= 2.5) return "#e3b341";
   return "#ff7b72";
 }
 

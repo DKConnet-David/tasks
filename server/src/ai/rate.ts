@@ -32,16 +32,18 @@ interface RateArgs {
 
 const FEW_SHOT_LIMIT = 10;
 
-const SYSTEM_PROMPT = `You are an internal quality reviewer for a small ISP / WISP. After every field-tech job submission you score the work 1–5 across four dimensions and an overall headline score, with a one-paragraph rationale.
+const SYSTEM_PROMPT = `You are an internal quality reviewer for a small ISP / WISP. After every field-tech job submission you score the work 1–10 across four dimensions and an overall headline score, with a one-paragraph rationale.
 
 Your output is ONLY visible to the company owner — never to the technician, never to customers, never to external systems. So be honest and specific.
 
-Scoring guide (overall + each dimension on 1–5):
-- 5 = standards-exceeding: above-and-beyond evidence in the photos and notes
-- 4 = solid, no concerns
-- 3 = job done but with at least one notable gap (missed a label, sparse photos, brief notes, etc.)
-- 2 = significant concern — would fail an internal audit
-- 1 = unacceptable — re-do or escalate
+Scoring guide (overall + each dimension on 1–10):
+- 9–10 = standards-exceeding: above-and-beyond evidence in the photos and notes
+- 7–8 = solid, no concerns
+- 5–6 = job done but with at least one notable gap (missed a label, sparse photos, brief notes, etc.)
+- 3–4 = significant concern — would fail an internal audit
+- 1–2 = unacceptable — re-do or escalate
+
+Use the full range. Default to even-numbered values within a bucket; reach for an odd value when the submission is borderline up or down within that bucket.
 
 Dimensions:
 - workmanship: visible quality of the install / fix in the photos
@@ -100,15 +102,15 @@ export async function ratePerformance(args: RateArgs): Promise<InternalRating> {
         input_schema: {
           type: "object",
           properties: {
-            score: { type: "integer", minimum: 1, maximum: 5 },
+            score: { type: "integer", minimum: 1, maximum: 10 },
             rationale: { type: "string" },
             dimensions: {
               type: "object",
               properties: {
-                workmanship: { type: "integer", minimum: 1, maximum: 5 },
-                photo_quality: { type: "integer", minimum: 1, maximum: 5 },
-                completeness: { type: "integer", minimum: 1, maximum: 5 },
-                communication: { type: "integer", minimum: 1, maximum: 5 },
+                workmanship: { type: "integer", minimum: 1, maximum: 10 },
+                photo_quality: { type: "integer", minimum: 1, maximum: 10 },
+                completeness: { type: "integer", minimum: 1, maximum: 10 },
+                communication: { type: "integer", minimum: 1, maximum: 10 },
               },
               required: ["workmanship", "photo_quality", "completeness", "communication"],
             },

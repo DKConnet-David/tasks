@@ -550,7 +550,7 @@ export function SubmissionDetail() {
           </p>
 
           <div className="panel" style={{ background: "#0e1a14" }}>
-            <strong>AI's rating: {rating.ai.score}/5</strong>
+            <strong>AI's rating: {rating.ai.score}/10</strong>
             <p style={{ whiteSpace: "pre-wrap", margin: "4px 0 0" }}>{rating.ai.rationale}</p>
             <div className="muted" style={{ fontSize: "0.85em", marginTop: 4 }}>
               {Object.entries(rating.ai.dimensions)
@@ -561,14 +561,14 @@ export function SubmissionDetail() {
 
           <div className="stack">
             <label className="stack" style={{ gap: 4 }}>
-              <span className="muted">Your score</span>
-              <div className="row" style={{ gap: 4 }}>
-                {[1, 2, 3, 4, 5].map((n) => (
+              <span className="muted">Your score (1–10)</span>
+              <div className="row" style={{ gap: 4, flexWrap: "wrap" }}>
+                {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => (
                   <button
                     key={n}
                     type="button"
                     className={n === adminScoreDraft ? "" : "secondary"}
-                    style={{ minWidth: 50 }}
+                    style={{ minWidth: 38, padding: "0.5rem 0.6rem" }}
                     onClick={() => setAdminScoreDraft(n)}
                   >
                     {n}
@@ -606,12 +606,12 @@ export function SubmissionDetail() {
                         <input
                           type="number"
                           min={1}
-                          max={5}
-                          value={adminDimsDraft[dim] ?? 3}
+                          max={10}
+                          value={adminDimsDraft[dim] ?? 6}
                           onChange={(e) =>
                             setAdminDimsDraft({
                               ...adminDimsDraft,
-                              [dim]: Math.max(1, Math.min(5, Number(e.target.value) || 3)),
+                              [dim]: Math.max(1, Math.min(10, Number(e.target.value) || 6)),
                             })
                           }
                           style={{ width: 70 }}

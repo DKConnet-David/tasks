@@ -726,7 +726,7 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
   );
 
   const RatingPatchSchema = z.object({
-    score: z.number().int().min(1).max(5).optional(),
+    score: z.number().int().min(1).max(10).optional(),
     rationale: z.string().optional(),
     dimensions: RatingDimensionsSchema.optional(),
   });

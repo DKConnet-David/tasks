@@ -103,12 +103,12 @@ export async function analyzePatterns(args: AnalyzeArgs): Promise<PatternResult>
     }
     if (s.ai_score !== null) {
       lines.push(
-        `ai_rating: ${s.ai_score}/5 — ${truncate(s.ai_rationale ?? "(no rationale)", 400)}`,
+        `ai_rating: ${s.ai_score}/10 — ${truncate(s.ai_rationale ?? "(no rationale)", 400)}`,
       );
     }
     if (s.admin_score !== null) {
       lines.push(
-        `admin_rating (overrides AI): ${s.admin_score}/5 — ${truncate(s.admin_rationale ?? "(no rationale)", 600)}`,
+        `admin_rating (overrides AI): ${s.admin_score}/10 — ${truncate(s.admin_rationale ?? "(no rationale)", 600)}`,
       );
     }
     return lines.join("\n");

@@ -185,8 +185,8 @@ function DimCell({ value }: { value: number | undefined }) {
   }
   return (
     <td style={td()}>
-      <span style={{ color: scoreColor5(value) }}>{value.toFixed(1)}</span>
-      <span className="muted" style={{ fontSize: "0.85em" }}> /5</span>
+      <span style={{ color: scoreColor(value) }}>{value.toFixed(1)}</span>
+      <span className="muted" style={{ fontSize: "0.85em" }}> /10</span>
     </td>
   );
 }
@@ -208,12 +208,6 @@ function sortTechs(techs: Tech[], sort: { key: SortKey; desc: boolean }): Tech[]
 function scoreColor(s: number): string {
   if (s >= 8) return "var(--c-success)";
   if (s >= 5) return "var(--c-warn)";
-  return "var(--c-danger)";
-}
-
-function scoreColor5(s: number): string {
-  if (s >= 4) return "var(--c-success)";
-  if (s >= 2.5) return "var(--c-warn)";
   return "var(--c-danger)";
 }
 

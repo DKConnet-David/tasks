@@ -78,15 +78,15 @@ export const ExternalSummarySchema = z.object({
 export type ExternalSummary = z.infer<typeof ExternalSummarySchema>;
 
 export const RatingDimensionsSchema = z.object({
-  workmanship: z.number().int().min(1).max(5),
-  photo_quality: z.number().int().min(1).max(5),
-  completeness: z.number().int().min(1).max(5),
-  communication: z.number().int().min(1).max(5),
+  workmanship: z.number().int().min(1).max(10),
+  photo_quality: z.number().int().min(1).max(10),
+  completeness: z.number().int().min(1).max(10),
+  communication: z.number().int().min(1).max(10),
 });
 export type RatingDimensions = z.infer<typeof RatingDimensionsSchema>;
 
 export const InternalRatingSchema = z.object({
-  score: z.number().int().min(1).max(5),
+  score: z.number().int().min(1).max(10),
   rationale: z.string().min(1),
   dimensions: RatingDimensionsSchema,
 });

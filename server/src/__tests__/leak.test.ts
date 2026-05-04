@@ -76,9 +76,9 @@ const pattern = {
 };
 
 const rating: InternalRating = {
-  score: 3,
+  score: 6,
   rationale: `Photos look fine but ${RATING_RATIONALE_NEEDLE}; missed labelling on the patch panel.`,
-  dimensions: { workmanship: 3, photo_quality: 4, completeness: 2, communication: 4 },
+  dimensions: { workmanship: 6, photo_quality: 8, completeness: 4, communication: 8 },
 };
 
 const task: SplynxTaskRaw = {

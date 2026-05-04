@@ -225,14 +225,14 @@ function ratingDisplay(ai: number | null, admin: number | null): React.ReactNode
   if (admin !== null) {
     return (
       <strong>
-        {admin}/5 <span className="muted" style={{ fontWeight: 400, fontSize: "0.8em" }}>(admin)</span>
+        {admin}/10 <span className="muted" style={{ fontWeight: 400, fontSize: "0.8em" }}>(admin)</span>
       </strong>
     );
   }
   if (ai !== null) {
     return (
       <span className="muted">
-        {ai}/5 <span className="badge" style={{ fontSize: "0.7em" }}>AI</span>
+        {ai}/10 <span className="badge" style={{ fontSize: "0.7em" }}>AI</span>
       </span>
     );
   }
