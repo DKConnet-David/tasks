@@ -54,6 +54,9 @@ interface DetailResponse {
   submission: Submission;
   photos: Photo[];
   actions: Action[];
+  // Pre-built Splynx URL for the underlying task. Empty when Splynx
+  // isn't configured.
+  splynx_task_url: string;
 }
 
 interface Summary {
@@ -295,7 +298,7 @@ export function SubmissionDetail() {
   if (error && !data) return <div className="panel danger">{error}</div>;
   if (!data) return <div className="panel muted">Loading…</div>;
 
-  const { submission, photos, actions } = data;
+  const { submission, photos, actions, splynx_task_url } = data;
   const summary = currentSummary(submission);
 
   return (
@@ -307,7 +310,24 @@ export function SubmissionDetail() {
 
       <div className="panel stack">
         <div className="row" style={{ justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
-          <h1 style={{ margin: 0 }}>Submission #{submission.id}</h1>
+          <h1 style={{ margin: 0 }}>
+            {splynx_task_url ? (
+              <a
+                href={splynx_task_url}
+                target="_blank"
+                rel="noreferrer"
+                title="Open task in Splynx (new tab)"
+                style={{ textDecoration: "none" }}
+              >
+                Task #{submission.task_id}{" "}
+                <span style={{ fontSize: "0.55em", verticalAlign: "middle", opacity: 0.7 }}>
+                  ↗
+                </span>
+              </a>
+            ) : (
+              <>Task #{submission.task_id}</>
+            )}
+          </h1>
           <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
             <span className={statusBadge(submission.status)}>{submission.status}</span>
             <span className="badge">{submission.source}</span>
@@ -318,8 +338,8 @@ export function SubmissionDetail() {
           </div>
         </div>
         <div className="muted" style={{ fontSize: "0.9em" }}>
-          {submission.app_login} • Splynx admin id {submission.splynx_admin_id} •{" "}
-          {new Date(submission.created_at).toLocaleString()}
+          Submission #{submission.id} • {submission.app_login} • Splynx admin id{" "}
+          {submission.splynx_admin_id} • {new Date(submission.created_at).toLocaleString()}
         </div>
         {submission.error && (
           <pre

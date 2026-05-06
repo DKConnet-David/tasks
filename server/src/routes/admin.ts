@@ -11,7 +11,7 @@ import { summarize } from "../ai/summarize.js";
 import { pipelineSendDocument } from "./whatsapp.js";
 import { photoPath, processAndSavePhoto, type SourcePhoto } from "../photos/store.js";
 import { runSubmissionPipeline } from "../pipeline/submit-task.js";
-import { formatSplynxComment, formatWhatsAppCaption } from "../format/external.js";
+import { formatSplynxComment, formatWhatsAppCaption, splynxTaskUrl } from "../format/external.js";
 import { createTech, listTechs, updateTech } from "../lib/techs.js";
 import {
   countActiveAdmins,
@@ -193,6 +193,12 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
       },
       photos,
       actions,
+      // Pre-built Splynx URL so the frontend doesn't need to know the
+      // tenant base URL or the URL pattern. Empty string when Splynx
+      // isn't configured (dev / stub mode).
+      splynx_task_url: config.SPLYNX_BASE_URL
+        ? splynxTaskUrl(config.SPLYNX_BASE_URL, sub.task_id)
+        : "",
     };
   });
 
