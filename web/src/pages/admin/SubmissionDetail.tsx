@@ -60,6 +60,10 @@ interface Summary {
   observations: string;
   follow_ups: string;
   job_type?: string;
+  // AI-generated, one per photo, in the same order as photos[]. Surfaced
+  // as the caption in the photo lightbox so the operator gets the AI's
+  // read on each image without leaving the page.
+  photo_descriptions?: string[];
 }
 
 interface RatingResponse {
@@ -89,6 +93,9 @@ export function SubmissionDetail() {
   const [adminScoreDraft, setAdminScoreDraft] = useState<number | null>(null);
   const [adminRationaleDraft, setAdminRationaleDraft] = useState<string>("");
   const [adminDimsDraft, setAdminDimsDraft] = useState<Record<string, number> | null>(null);
+
+  // Photo lightbox: null = closed, number = current photo index in photos[].
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
 
   async function loadAll() {
     if (!id) return;
@@ -497,12 +504,11 @@ export function SubmissionDetail() {
               gap: 8,
             }}
           >
-            {photos.map((p) => (
-              <a
+            {photos.map((p, i) => (
+              <button
                 key={p.id}
-                href={`/api/submissions/${submission.id}/photos/${p.filename}`}
-                target="_blank"
-                rel="noreferrer"
+                type="button"
+                onClick={() => setLightboxIndex(i)}
                 style={{
                   aspectRatio: "1 / 1",
                   borderRadius: "var(--r)",
@@ -510,13 +516,18 @@ export function SubmissionDetail() {
                   background: "#000",
                   position: "relative",
                   display: "block",
+                  padding: 0,
+                  border: "none",
+                  cursor: "zoom-in",
+                  boxShadow: "var(--shadow-1)",
                 }}
+                aria-label={`Open photo ${i + 1} of ${photos.length}`}
               >
                 <img
                   src={`/api/submissions/${submission.id}/photos/${p.filename}`}
                   alt=""
                   loading="lazy"
-                  style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                  style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
                 />
                 {p.splynx_file_id && (
                   <span
@@ -526,7 +537,7 @@ export function SubmissionDetail() {
                     Splynx ✓
                   </span>
                 )}
-              </a>
+              </button>
             ))}
           </div>
         )}
@@ -658,6 +669,17 @@ export function SubmissionDetail() {
           </div>
         </details>
       )}
+
+      {lightboxIndex !== null && photos[lightboxIndex] && (
+        <PhotoLightbox
+          submissionId={submission.id}
+          photos={photos}
+          descriptions={summary?.photo_descriptions ?? []}
+          index={lightboxIndex}
+          onChange={setLightboxIndex}
+          onClose={() => setLightboxIndex(null)}
+        />
+      )}
     </div>
   );
 }
@@ -708,4 +730,235 @@ function currentSummary(submission: Submission): Summary | null {
     /* ignore */
   }
   return null;
+}
+
+// ---------- Photo lightbox ----------
+
+interface LightboxPhoto {
+  id: number;
+  filename: string;
+  splynx_file_id: number | null;
+}
+
+function PhotoLightbox({
+  submissionId,
+  photos,
+  descriptions,
+  index,
+  onChange,
+  onClose,
+}: {
+  submissionId: number;
+  photos: LightboxPhoto[];
+  descriptions: string[];
+  index: number;
+  onChange: (i: number) => void;
+  onClose: () => void;
+}) {
+  const photo = photos[index]!;
+  const description = descriptions[index] ?? "";
+  const total = photos.length;
+  const url = `/api/submissions/${submissionId}/photos/${photo.filename}`;
+
+  // Keyboard: Esc closes, ←/→ navigate. Re-bind whenever index/total
+  // changes so the bounds checks read the latest values.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        onClose();
+      } else if (e.key === "ArrowLeft" && index > 0) {
+        onChange(index - 1);
+      } else if (e.key === "ArrowRight" && index < total - 1) {
+        onChange(index + 1);
+      }
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [index, total, onChange, onClose]);
+
+  // Lock body scroll while open so the page behind doesn't move when the
+  // user wheels through the lightbox.
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, []);
+
+  function stop(e: React.SyntheticEvent) {
+    e.stopPropagation();
+  }
+
+  return (
+    <div
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Photo viewer"
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(0, 0, 0, 0.92)",
+        zIndex: 1000,
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "16px",
+      }}
+    >
+      {/* Top toolbar */}
+      <div
+        onClick={stop}
+        style={{
+          position: "absolute",
+          top: 12,
+          left: 12,
+          right: 12,
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          gap: 8,
+          color: "#e6edf3",
+          fontSize: "0.9em",
+        }}
+      >
+        <div className="row" style={{ gap: 12, alignItems: "center" }}>
+          <span className="tabular" style={{ fontWeight: 600 }}>
+            {index + 1} / {total}
+          </span>
+          {photo.splynx_file_id && (
+            <span className="badge success">Splynx ✓</span>
+          )}
+        </div>
+        <div className="row" style={{ gap: 8 }}>
+          <a
+            href={url}
+            download={photo.filename}
+            className="badge"
+            style={{ background: "rgba(255,255,255,0.1)", color: "#e6edf3", padding: "6px 10px" }}
+            onClick={stop}
+          >
+            Download
+          </a>
+          <a
+            href={url}
+            target="_blank"
+            rel="noreferrer"
+            className="badge"
+            style={{ background: "rgba(255,255,255,0.1)", color: "#e6edf3", padding: "6px 10px" }}
+            onClick={stop}
+          >
+            Open original
+          </a>
+          <button
+            type="button"
+            onClick={(e) => {
+              stop(e);
+              onClose();
+            }}
+            className="secondary"
+            style={{ padding: "6px 12px", fontSize: "1em", lineHeight: 1 }}
+            aria-label="Close"
+          >
+            ✕
+          </button>
+        </div>
+      </div>
+
+      {/* Prev */}
+      {index > 0 && (
+        <button
+          type="button"
+          onClick={(e) => {
+            stop(e);
+            onChange(index - 1);
+          }}
+          className="secondary"
+          aria-label="Previous photo"
+          style={{
+            position: "absolute",
+            left: 16,
+            top: "50%",
+            transform: "translateY(-50%)",
+            width: 48,
+            height: 48,
+            borderRadius: "50%",
+            fontSize: "1.4em",
+            padding: 0,
+          }}
+        >
+          ‹
+        </button>
+      )}
+
+      {/* Next */}
+      {index < total - 1 && (
+        <button
+          type="button"
+          onClick={(e) => {
+            stop(e);
+            onChange(index + 1);
+          }}
+          className="secondary"
+          aria-label="Next photo"
+          style={{
+            position: "absolute",
+            right: 16,
+            top: "50%",
+            transform: "translateY(-50%)",
+            width: 48,
+            height: 48,
+            borderRadius: "50%",
+            fontSize: "1.4em",
+            padding: 0,
+          }}
+        >
+          ›
+        </button>
+      )}
+
+      {/* Image + caption — clicking inside the inner block must NOT close */}
+      <div
+        onClick={stop}
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          gap: 12,
+          maxWidth: "100%",
+          maxHeight: "100%",
+        }}
+      >
+        <img
+          src={url}
+          alt={description || `Photo ${index + 1}`}
+          style={{
+            maxWidth: "min(100%, 1400px)",
+            maxHeight: "calc(100vh - 140px)",
+            objectFit: "contain",
+            borderRadius: "var(--r)",
+            boxShadow: "var(--shadow-3)",
+            background: "#000",
+          }}
+        />
+        {description && (
+          <p
+            style={{
+              margin: 0,
+              maxWidth: 800,
+              textAlign: "center",
+              color: "#c9d1d9",
+              fontSize: "0.95em",
+              lineHeight: 1.4,
+              padding: "0 8px",
+            }}
+          >
+            {description}
+          </p>
+        )}
+      </div>
+    </div>
+  );
 }
