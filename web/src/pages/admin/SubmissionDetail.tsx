@@ -44,6 +44,8 @@ interface Photo {
 interface Action {
   id: number;
   action: string;
+  // Null for legacy actions recorded before multi-admin support landed.
+  actor_login: string | null;
   details_json: string | null;
   created_at: number;
 }
@@ -693,6 +695,7 @@ export function SubmissionDetail() {
               <thead>
                 <tr style={{ textAlign: "left" }}>
                   <th style={{ padding: 4 }}>When</th>
+                  <th style={{ padding: 4 }}>Who</th>
                   <th style={{ padding: 4 }}>Action</th>
                   <th style={{ padding: 4 }}>Details</th>
                 </tr>
@@ -701,6 +704,13 @@ export function SubmissionDetail() {
                 {actions.map((a) => (
                   <tr key={a.id} style={{ borderTop: "1px solid var(--c-border)" }}>
                     <td style={{ padding: 4 }}>{new Date(a.created_at).toLocaleString()}</td>
+                    <td style={{ padding: 4 }}>
+                      {a.actor_login ? (
+                        <strong>{a.actor_login}</strong>
+                      ) : (
+                        <span className="muted">—</span>
+                      )}
+                    </td>
                     <td style={{ padding: 4 }}>{a.action}</td>
                     <td style={{ padding: 4, fontFamily: "monospace", fontSize: "0.8em" }}>
                       {a.details_json ?? ""}

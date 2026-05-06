@@ -13,6 +13,7 @@ export function AdminLayout() {
             <NavLink to="/admin/performance">Performance</NavLink>
             <NavLink to="/admin/manual">Manual entry</NavLink>
             <NavLink to="/admin/techs">Techs</NavLink>
+            <NavLink to="/admin/admins">Admins</NavLink>
             <NavLink to="/admin/whatsapp">WhatsApp</NavLink>
           </nav>
         </div>

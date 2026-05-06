@@ -124,6 +124,23 @@ function migrate(d: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_techs_login ON techs(login);
 
+    -- App-managed admin accounts. Admins log into /admin and can edit
+    -- summaries, override ratings, manage techs, and now provision other
+    -- admins. The env-var ADMIN_LOGIN/ADMIN_PASSWORD seeds the first admin
+    -- row on first boot (when this table is empty) and remains a permanent
+    -- recovery credential — see auth.ts for the order-of-checks.
+    CREATE TABLE IF NOT EXISTS admins (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      login TEXT NOT NULL UNIQUE,
+      password_hash TEXT NOT NULL,
+      splynx_admin_id INTEGER NOT NULL,
+      display_name TEXT NOT NULL,
+      is_active INTEGER NOT NULL DEFAULT 1,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_admins_login ON admins(login);
+
     -- Cached output of the per-tech monthly pattern-detection Claude call
     -- (server/src/ai/patterns.ts). Admin-only data — never reaches PDF /
     -- WhatsApp / Splynx — see the leak-test for the runtime guarantee.
@@ -189,6 +206,14 @@ function migrate(d: Database.Database): void {
   }
   if (!ratingCols.has("ai_improvements_json")) {
     d.exec(`ALTER TABLE submission_ratings ADD COLUMN ai_improvements_json TEXT`);
+  }
+
+  // 2026-05-06: multi-admin support. Audit log now attributes each action
+  // to the admin who performed it. Nullable so legacy rows (single env-var
+  // admin era) keep showing up as "—" in the actor column.
+  const actionCols = cols("admin_actions");
+  if (!actionCols.has("actor_login")) {
+    d.exec(`ALTER TABLE admin_actions ADD COLUMN actor_login TEXT`);
   }
 
   // 2026-05-04: rating scale migrated from 1–5 to 1–10. Existing scores are

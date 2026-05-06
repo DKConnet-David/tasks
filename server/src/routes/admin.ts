@@ -13,6 +13,12 @@ import { photoPath, processAndSavePhoto, type SourcePhoto } from "../photos/stor
 import { runSubmissionPipeline } from "../pipeline/submit-task.js";
 import { formatSplynxComment, formatWhatsAppCaption } from "../format/external.js";
 import { createTech, listTechs, updateTech } from "../lib/techs.js";
+import {
+  countActiveAdmins,
+  createAdmin,
+  listAdmins,
+  updateAdmin,
+} from "../lib/admins.js";
 
 const ListQuery = z.object({
   status: z.enum(["pending", "success", "partial", "failed"]).optional(),
@@ -168,12 +174,13 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
 
     const actions = db
       .prepare(
-        `SELECT id, action, details_json, created_at
+        `SELECT id, action, actor_login, details_json, created_at
          FROM admin_actions WHERE submission_id = ? ORDER BY id DESC LIMIT 50`,
       )
       .all(id) as Array<{
       id: number;
       action: string;
+      actor_login: string | null;
       details_json: string | null;
       created_at: number;
     }>;
@@ -215,7 +222,7 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
       }
     }
 
-    recordAdminAction(db, id, "edit_summary", { pushedToSplynx, pushError });
+    recordAdminAction(db, id, req.session?.app_login ?? null, "edit_summary", { pushedToSplynx, pushError });
     return { ok: true, pushed_to_splynx: pushedToSplynx, push_error: pushError };
   });
 
@@ -234,7 +241,7 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
       db.prepare(
         `UPDATE submissions SET tech_comment_override = ?, updated_at = ? WHERE id = ?`,
       ).run(value, Date.now(), id);
-      recordAdminAction(db, id, "edit_tech_comment", { length: value?.length ?? 0 });
+      recordAdminAction(db, id, req.session?.app_login ?? null, "edit_tech_comment", { length: value?.length ?? 0 });
       return { ok: true };
     },
   );
@@ -310,11 +317,11 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
             id,
           );
         }
-        recordAdminAction(db, id, "resend_whatsapp", { messageId: result.messageId });
+        recordAdminAction(db, id, req.session?.app_login ?? null, "resend_whatsapp", { messageId: result.messageId });
         return { ok: true, message_id: result.messageId };
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        recordAdminAction(db, id, "resend_whatsapp", { error: msg });
+        recordAdminAction(db, id, req.session?.app_login ?? null, "resend_whatsapp", { error: msg });
         return reply.code(503).send({ error: "send_failed", detail: msg });
       }
     },
@@ -368,7 +375,7 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
       // but the PDF already contains the full photo grid so it was
       // redundant clutter. Re-attach now reposts the comment + PDF only.
 
-      recordAdminAction(db, id, "reattach_splynx", { commentId, errors });
+      recordAdminAction(db, id, req.session?.app_login ?? null, "reattach_splynx", { commentId, errors });
       return { ok: errors.length === 0, comment_id: commentId, errors };
     },
   );
@@ -406,11 +413,11 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
           photoBuffers,
           techName: sub.app_login,
         });
-        recordAdminAction(db, id, "regenerate_summary", { headline: summary.headline });
+        recordAdminAction(db, id, req.session?.app_login ?? null, "regenerate_summary", { headline: summary.headline });
         return { ok: true, summary };
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        recordAdminAction(db, id, "regenerate_summary", { error: msg });
+        recordAdminAction(db, id, req.session?.app_login ?? null, "regenerate_summary", { error: msg });
         return reply.code(503).send({ error: "regenerate_failed", detail: msg });
       }
     },
@@ -451,7 +458,7 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
         `UPDATE submissions SET corrected_summary_json = ?, updated_at = ? WHERE id = ?`,
       ).run(JSON.stringify(updated), Date.now(), id);
 
-      recordAdminAction(db, id, "edit_job_type", { job_type: parsed.data.job_type });
+      recordAdminAction(db, id, req.session?.app_login ?? null, "edit_job_type", { job_type: parsed.data.job_type });
       return { ok: true, job_type: parsed.data.job_type };
     },
   );
@@ -478,7 +485,7 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
         Date.now(),
         id,
       );
-      recordAdminAction(db, id, parsed.data.hidden ? "hide" : "unhide", {});
+      recordAdminAction(db, id, req.session?.app_login ?? null, parsed.data.hidden ? "hide" : "unhide", {});
       return { ok: true, hidden: parsed.data.hidden };
     },
   );
@@ -498,7 +505,7 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
         Date.now(),
         id,
       );
-      recordAdminAction(db, id, "resolve", { resolved: next === 1 });
+      recordAdminAction(db, id, req.session?.app_login ?? null, "resolve", { resolved: next === 1 });
       return { ok: true, admin_resolved: next === 1 };
     },
   );
@@ -619,7 +626,7 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
       task,
     });
 
-    recordAdminAction(db, submissionId, "manual_submit", {
+    recordAdminAction(db, submissionId, req.session?.app_login ?? null, "manual_submit", {
       onBehalfOfLogin: recordedLogin,
       photosSaved: savedCount,
     });
@@ -693,6 +700,95 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
     // Soft delete — submissions reference app_login as a denormalised string,
     // so a hard delete would lose the audit link.
     await updateTech(db, id, { is_active: false });
+    return { ok: true };
+  });
+
+  // ---------- ADMIN PROVISIONING ----------
+  app.get("/admin/admins", { preHandler: requireAdmin }, async () => {
+    return { admins: listAdmins(db) };
+  });
+
+  const AdminCreateSchema = z.object({
+    login: z.string().min(1).max(64).regex(/^[a-zA-Z0-9._-]+$/, "letters, digits, . _ - only"),
+    password: z.string().min(8).max(256),
+    splynx_admin_id: z.coerce.number().int().positive(),
+    display_name: z.string().min(1).max(120),
+  });
+
+  app.post("/admin/admins", { preHandler: requireAdmin }, async (req, reply) => {
+    const parsed = AdminCreateSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "invalid_body", issues: parsed.error.issues });
+    }
+    // Avoid silent overlap with a tech of the same login — auth.ts checks
+    // admins first, but a duplicate is confusing operationally and the audit
+    // log can't tell them apart by login alone.
+    const techCol = db.prepare(`SELECT 1 FROM techs WHERE login = ?`).get(parsed.data.login);
+    if (techCol) {
+      return reply.code(409).send({
+        error: "login_conflict_with_tech",
+        message: "A tech with that login exists. Use a different login or remove the tech first.",
+      });
+    }
+    try {
+      const id = await createAdmin(db, parsed.data);
+      return reply.code(201).send({ id });
+    } catch (err) {
+      const e = err as { code?: string; message?: string };
+      if (e.code === "SQLITE_CONSTRAINT_UNIQUE") {
+        return reply.code(409).send({ error: "login_taken" });
+      }
+      throw err;
+    }
+  });
+
+  const AdminPatchSchema = z.object({
+    password: z.string().min(8).max(256).optional(),
+    splynx_admin_id: z.coerce.number().int().positive().optional(),
+    display_name: z.string().min(1).max(120).optional(),
+    is_active: z.boolean().optional(),
+  });
+
+  app.patch("/admin/admins/:id", { preHandler: requireAdmin }, async (req, reply) => {
+    const id = parseId((req.params as { id: string }).id);
+    if (id === null) return reply.code(400).send({ error: "invalid_id" });
+    const parsed = AdminPatchSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "invalid_body", issues: parsed.error.issues });
+    }
+    // Lockout guard: refuse a deactivation that would zero out the active
+    // admin set. The env-var recovery credentials still work, but the
+    // operator may have rotated them or forgotten — better to fail fast
+    // than to lock the UI.
+    if (parsed.data.is_active === false) {
+      const current = db
+        .prepare(`SELECT is_active FROM admins WHERE id = ?`)
+        .get(id) as { is_active: number } | undefined;
+      if (current?.is_active === 1 && countActiveAdmins(db) <= 1) {
+        return reply.code(400).send({
+          error: "last_active_admin",
+          message: "Cannot disable the last active admin. Create another active admin first.",
+        });
+      }
+    }
+    await updateAdmin(db, id, parsed.data);
+    return { ok: true };
+  });
+
+  app.delete("/admin/admins/:id", { preHandler: requireAdmin }, async (req, reply) => {
+    const id = parseId((req.params as { id: string }).id);
+    if (id === null) return reply.code(400).send({ error: "invalid_id" });
+    // Same lockout guard — soft-delete is just is_active = 0.
+    const current = db
+      .prepare(`SELECT is_active FROM admins WHERE id = ?`)
+      .get(id) as { is_active: number } | undefined;
+    if (current?.is_active === 1 && countActiveAdmins(db) <= 1) {
+      return reply.code(400).send({
+        error: "last_active_admin",
+        message: "Cannot disable the last active admin. Create another active admin first.",
+      });
+    }
+    await updateAdmin(db, id, { is_active: false });
     return { ok: true };
   });
 
@@ -794,7 +890,7 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
       db.prepare(`UPDATE submission_ratings SET ${sets.join(", ")} WHERE submission_id = ?`).run(
         ...params,
       );
-      recordAdminAction(db, id, "edit_rating", { ...parsed.data });
+      recordAdminAction(db, id, req.session?.app_login ?? null, "edit_rating", { ...parsed.data });
       return { ok: true };
     },
   );
@@ -829,12 +925,14 @@ function loadSubmission(db: ReturnType<typeof getDb>, id: number): MinimalSubmis
 function recordAdminAction(
   db: ReturnType<typeof getDb>,
   submissionId: number,
+  actorLogin: string | null,
   action: string,
   details: unknown,
 ): void {
   db.prepare(
-    `INSERT INTO admin_actions (submission_id, action, details_json, created_at) VALUES (?, ?, ?, ?)`,
-  ).run(submissionId, action, JSON.stringify(details ?? null), Date.now());
+    `INSERT INTO admin_actions (submission_id, actor_login, action, details_json, created_at)
+     VALUES (?, ?, ?, ?, ?)`,
+  ).run(submissionId, actorLogin, action, JSON.stringify(details ?? null), Date.now());
 }
 
 function parseId(s: string): number | null {

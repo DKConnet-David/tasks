@@ -5,13 +5,19 @@ import { createSession, destroySession, loadSession, sessionCookieName } from ".
 import type { AppConfig } from "../config.js";
 import { getDb } from "../db.js";
 import { findTechByLogin, verifyPassword, dummyVerify } from "../lib/techs.js";
+import { findAdminByLogin, verifyAdminPassword } from "../lib/admins.js";
 
 /**
  * App-only auth.
  *
  * Order of precedence:
- *   1. ADMIN_LOGIN + ADMIN_PASSWORD (env-driven, single admin).
- *   2. techs table (admin-provisioned, bcrypt-hashed password).
+ *   1. admins table (admin-provisioned via /admin/admins, bcrypt-hashed).
+ *   2. techs table (admin-provisioned via /admin/techs, bcrypt-hashed).
+ *   3. ADMIN_LOGIN + ADMIN_PASSWORD env vars — permanent recovery
+ *      credentials. Always work, regardless of whether a row with that
+ *      login exists in admins (or its is_active state). Used to bootstrap
+ *      the seed admin and to break-glass-recover if the operator locks
+ *      themselves out via the UI. Rotate them in Coolify if compromised.
  *
  * Total response time is dominated by bcrypt.compare(~100ms). To prevent a
  * timing oracle that distinguishes "unknown login" from "wrong password",
@@ -42,24 +48,27 @@ export async function registerAuthRoutes(app: FastifyInstance, config: AppConfig
       splynx_admin_id: number;
       is_admin: boolean;
     } | null = null;
+    let bcryptRan = false;
 
-    // Path 1: admin login.
-    if (
-      constantTimeStringEqual(login, config.ADMIN_LOGIN) &&
-      constantTimeStringEqual(password, config.ADMIN_PASSWORD)
-    ) {
-      session = {
-        app_login: config.ADMIN_LOGIN,
-        splynx_admin_id: config.ADMIN_SPLYNX_ADMIN_ID,
-        is_admin: true,
-      };
-      // Still run a dummy bcrypt so admin login takes ~the same time as a
-      // tech login, removing the time-based admin-vs-tech distinguisher.
-      await dummyVerify(password);
-    } else {
-      // Path 2: tech login.
+    // Path 1: admins table.
+    const admin = findAdminByLogin(db, login);
+    if (admin && admin.is_active === 1) {
+      bcryptRan = true;
+      const ok = await verifyAdminPassword(password, admin.password_hash);
+      if (ok) {
+        session = {
+          app_login: admin.login,
+          splynx_admin_id: admin.splynx_admin_id,
+          is_admin: true,
+        };
+      }
+    }
+
+    // Path 2: techs table (only if admin path didn't authenticate).
+    if (!session) {
       const tech = findTechByLogin(db, login);
       if (tech && tech.is_active === 1) {
+        bcryptRan = true;
         const ok = await verifyPassword(password, tech.password_hash);
         if (ok) {
           session = {
@@ -68,11 +77,28 @@ export async function registerAuthRoutes(app: FastifyInstance, config: AppConfig
             is_admin: false,
           };
         }
-      } else {
-        // Login doesn't exist or is inactive — run a dummy compare to keep
-        // timing similar to a real bcrypt path.
-        await dummyVerify(password);
       }
+    }
+
+    // Path 3: env-var recovery (always works, regardless of table state).
+    if (!session) {
+      if (
+        constantTimeStringEqual(login, config.ADMIN_LOGIN) &&
+        constantTimeStringEqual(password, config.ADMIN_PASSWORD)
+      ) {
+        session = {
+          app_login: config.ADMIN_LOGIN,
+          splynx_admin_id: config.ADMIN_SPLYNX_ADMIN_ID,
+          is_admin: true,
+        };
+      }
+    }
+
+    // Timing-oracle mitigation: if no real bcrypt ran (e.g. login not found
+    // in either table), run a dummy compare so the 401 response time is
+    // close to a "wrong password" response time.
+    if (!session && !bcryptRan) {
+      await dummyVerify(password);
     }
 
     if (!session) {

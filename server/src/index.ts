@@ -13,7 +13,23 @@ import { start as startBaileys } from "./whatsapp/baileys.js";
 async function main() {
   const config = loadConfig();
   // Initialize DB (runs migrations).
-  getDb(config.DATA_DIR);
+  const db = getDb(config.DATA_DIR);
+
+  // Bootstrap-seed the env-var admin into the admins table on first boot.
+  // After this, additional admins can be created via /admin/admins. The
+  // env-var ADMIN_LOGIN / ADMIN_PASSWORD remains a permanent recovery
+  // credential — auth.ts checks the admins table first and falls back to
+  // the env vars if no match. To rotate the seed admin: edit them via
+  // the Admins page, not by changing env vars.
+  const { countAdmins, createAdmin } = await import("./lib/admins.js");
+  if (countAdmins(db) === 0) {
+    await createAdmin(db, {
+      login: config.ADMIN_LOGIN,
+      password: config.ADMIN_PASSWORD,
+      splynx_admin_id: config.ADMIN_SPLYNX_ADMIN_ID,
+      display_name: config.ADMIN_LOGIN,
+    });
+  }
 
   const app = Fastify({
     logger: {
