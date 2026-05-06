@@ -55,6 +55,8 @@ const summary: ExternalSummary = {
 const RATING_RATIONALE_NEEDLE = "_LEAK_TEST_RATIONALE_canary_phrase_42";
 const ADMIN_NEEDLE = "_LEAK_TEST_ADMIN_canary_42";
 const PATTERN_NEEDLE = "_LEAK_TEST_PATTERN_canary_99";
+const STRENGTH_NEEDLE = "_LEAK_TEST_STRENGTH_canary_77";
+const IMPROVEMENT_NEEDLE = "_LEAK_TEST_IMPROVEMENT_canary_88";
 
 // Synthetic pattern result mirroring what server/src/ai/patterns.ts
 // produces. Pattern data is admin-only (stored in tech_patterns, served
@@ -77,7 +79,14 @@ const pattern = {
 
 const rating: InternalRating = {
   score: 6,
-  rationale: `Photos look fine but ${RATING_RATIONALE_NEEDLE}; missed labelling on the patch panel.`,
+  strengths: [
+    `Photos cover the install end-to-end ${STRENGTH_NEEDLE}.`,
+    `Asset tag visible on the device.`,
+  ],
+  improvements: [
+    `Patch panel was unlabelled ${IMPROVEMENT_NEEDLE}; document on next visit.`,
+    `${RATING_RATIONALE_NEEDLE} no after-shot of the rack door closed.`,
+  ],
   dimensions: { workmanship: 6, photo_quality: 8, completeness: 4, communication: 8 },
 };
 
@@ -130,21 +139,24 @@ describe("rating containment (leak test)", () => {
   // phrases are sufficient; if they show up, the formatter has been changed
   // to include rating data.
 
-  it("Splynx comment HTML never includes rating rationale phrases", () => {
-    const html = formatSplynxComment(summary, "lorenzo", false);
-    expect(html).not.toContain(RATING_RATIONALE_NEEDLE);
-    expect(html).not.toContain(ADMIN_NEEDLE);
-    expect(html).not.toContain(rating.rationale);
+  function expectNoRatingLeak(output: string): void {
+    expect(output).not.toContain(RATING_RATIONALE_NEEDLE);
+    expect(output).not.toContain(ADMIN_NEEDLE);
+    expect(output).not.toContain(STRENGTH_NEEDLE);
+    expect(output).not.toContain(IMPROVEMENT_NEEDLE);
+    for (const s of rating.strengths) expect(output).not.toContain(s);
+    for (const i of rating.improvements) expect(output).not.toContain(i);
+  }
+
+  it("Splynx comment HTML never includes rating data", () => {
+    expectNoRatingLeak(formatSplynxComment(summary, "lorenzo", false));
   });
 
   it("Splynx comment HTML (admin update variant) never includes rating data", () => {
-    const html = formatSplynxComment(summary, "lorenzo", true);
-    expect(html).not.toContain(RATING_RATIONALE_NEEDLE);
-    expect(html).not.toContain(ADMIN_NEEDLE);
-    expect(html).not.toContain(rating.rationale);
+    expectNoRatingLeak(formatSplynxComment(summary, "lorenzo", true));
   });
 
-  it("WhatsApp caption never includes rating rationale phrases", () => {
+  it("WhatsApp caption never includes rating data", () => {
     const caption = formatWhatsAppCaption(
       summary,
       task,
@@ -152,9 +164,7 @@ describe("rating containment (leak test)", () => {
       "https://clientzone.dkconnect.co.za",
       "ANJA001",
     );
-    expect(caption).not.toContain(RATING_RATIONALE_NEEDLE);
-    expect(caption).not.toContain(ADMIN_NEEDLE);
-    expect(caption).not.toContain(rating.rationale);
+    expectNoRatingLeak(caption);
   });
 
   it("formatters never include pattern-detection output", () => {
@@ -184,7 +194,7 @@ describe("rating containment (leak test)", () => {
     expect(allOutputs).not.toContain(pattern.summary);
   });
 
-  it("PDF buffer never contains rating rationale phrases", async () => {
+  it("PDF buffer never contains rating or pattern data", async () => {
     const pdf = await generatePdf({
       task,
       summary,
@@ -196,6 +206,10 @@ describe("rating containment (leak test)", () => {
     const text = pdf.toString("binary");
     expect(text).not.toContain(RATING_RATIONALE_NEEDLE);
     expect(text).not.toContain(ADMIN_NEEDLE);
+    expect(text).not.toContain(STRENGTH_NEEDLE);
+    expect(text).not.toContain(IMPROVEMENT_NEEDLE);
+    for (const s of rating.strengths) expect(text).not.toContain(s);
+    for (const i of rating.improvements) expect(text).not.toContain(i);
     expect(text).not.toContain(PATTERN_NEEDLE);
     expect(text).not.toContain(pattern.summary);
     for (const i of pattern.issues) expect(text).not.toContain(i.evidence);

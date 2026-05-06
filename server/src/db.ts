@@ -178,6 +178,19 @@ function migrate(d: Database.Database): void {
     d.exec(`ALTER TABLE sessions RENAME COLUMN splynx_login TO app_login`);
   }
 
+  // 2026-05-06: AI rating now produces structured strengths/improvements
+  // bullets instead of a free-form rationale paragraph. Two new nullable
+  // JSON columns hold those arrays. ai_rationale stays as the legacy
+  // fallback for old rows; new rows write empty string into it. Admin
+  // rationale stays as a single textarea (per the operator's design call).
+  const ratingCols = cols("submission_ratings");
+  if (!ratingCols.has("ai_strengths_json")) {
+    d.exec(`ALTER TABLE submission_ratings ADD COLUMN ai_strengths_json TEXT`);
+  }
+  if (!ratingCols.has("ai_improvements_json")) {
+    d.exec(`ALTER TABLE submission_ratings ADD COLUMN ai_improvements_json TEXT`);
+  }
+
   // 2026-05-04: rating scale migrated from 1–5 to 1–10. Existing scores are
   // doubled so the meaning of historical ratings (and the few-shot calibration
   // they provide to the AI) is preserved one-for-one. Idempotent via the

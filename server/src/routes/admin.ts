@@ -706,6 +706,7 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
       const row = db
         .prepare(
           `SELECT ai_score, ai_rationale, ai_dimensions_json,
+                  ai_strengths_json, ai_improvements_json,
                   admin_score, admin_rationale, admin_dimensions_json,
                   reviewed_at, created_at, updated_at
            FROM submission_ratings WHERE submission_id = ?`,
@@ -715,6 +716,8 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
             ai_score: number;
             ai_rationale: string;
             ai_dimensions_json: string;
+            ai_strengths_json: string | null;
+            ai_improvements_json: string | null;
             admin_score: number | null;
             admin_rationale: string | null;
             admin_dimensions_json: string | null;
@@ -727,7 +730,12 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
       return {
         ai: {
           score: row.ai_score,
+          // Legacy paragraph rationale — populated for older ratings only.
+          // New ratings use the strengths / improvements arrays below and
+          // store an empty string here.
           rationale: row.ai_rationale,
+          strengths: parseStringArray(row.ai_strengths_json),
+          improvements: parseStringArray(row.ai_improvements_json),
           dimensions: safeParse(row.ai_dimensions_json),
         },
         admin: row.admin_score
@@ -839,6 +847,16 @@ function safeParse(json: string): unknown {
     return JSON.parse(json);
   } catch {
     return null;
+  }
+}
+
+function parseStringArray(json: string | null): string[] {
+  if (!json) return [];
+  try {
+    const v = JSON.parse(json);
+    return Array.isArray(v) ? v.filter((s): s is string => typeof s === "string") : [];
+  } catch {
+    return [];
   }
 }
 

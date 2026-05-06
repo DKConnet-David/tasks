@@ -46,7 +46,11 @@ export interface SubmissionInput {
   // Internal-only rating signals. Admin rationale is the strongest signal
   // of David's standards and is weighted heaviest in the prompt.
   ai_score: number | null;
+  // Legacy paragraph rationale (older submissions); empty for new ones
+  // since the AI now produces structured strengths/improvements arrays.
   ai_rationale: string | null;
+  ai_strengths: string[];
+  ai_improvements: string[];
   admin_score: number | null;
   admin_rationale: string | null;
 }
@@ -102,9 +106,26 @@ export async function analyzePatterns(args: AnalyzeArgs): Promise<PatternResult>
       lines.push(`follow_ups: ${truncate(s.summary_follow_ups, 500)}`);
     }
     if (s.ai_score !== null) {
-      lines.push(
-        `ai_rating: ${s.ai_score}/10 — ${truncate(s.ai_rationale ?? "(no rationale)", 400)}`,
-      );
+      lines.push(`ai_rating: ${s.ai_score}/10`);
+      if (s.ai_strengths.length > 0) {
+        lines.push(
+          `  ai_strengths: ${s.ai_strengths.map((x) => `- ${truncate(x, 200)}`).join(" ")}`,
+        );
+      }
+      if (s.ai_improvements.length > 0) {
+        lines.push(
+          `  ai_improvements: ${s.ai_improvements.map((x) => `- ${truncate(x, 200)}`).join(" ")}`,
+        );
+      }
+      if (
+        s.ai_strengths.length === 0 &&
+        s.ai_improvements.length === 0 &&
+        s.ai_rationale &&
+        s.ai_rationale.trim()
+      ) {
+        // Legacy paragraph rationale for older submissions.
+        lines.push(`  ai_rationale: ${truncate(s.ai_rationale, 400)}`);
+      }
     }
     if (s.admin_score !== null) {
       lines.push(

@@ -505,6 +505,7 @@ export async function registerPerformanceRoutes(
           `SELECT s.id AS submission_id, s.task_id, s.created_at,
                   s.summary_json, s.corrected_summary_json,
                   r.ai_score, r.ai_rationale,
+                  r.ai_strengths_json, r.ai_improvements_json,
                   r.admin_score, r.admin_rationale
            FROM submissions s
            LEFT JOIN submission_ratings r ON r.submission_id = s.id
@@ -522,6 +523,8 @@ export async function registerPerformanceRoutes(
         corrected_summary_json: string | null;
         ai_score: number | null;
         ai_rationale: string | null;
+        ai_strengths_json: string | null;
+        ai_improvements_json: string | null;
         admin_score: number | null;
         admin_rationale: string | null;
       }>;
@@ -577,6 +580,8 @@ export async function registerPerformanceRoutes(
           summary_follow_ups: summary?.follow_ups ?? null,
           ai_score: r.ai_score,
           ai_rationale: r.ai_rationale,
+          ai_strengths: parseStringArrayLocal(r.ai_strengths_json),
+          ai_improvements: parseStringArrayLocal(r.ai_improvements_json),
           admin_score: r.admin_score,
           admin_rationale: r.admin_rationale,
         };
@@ -703,6 +708,16 @@ function safeParse(json: string): unknown {
     return JSON.parse(json);
   } catch {
     return null;
+  }
+}
+
+function parseStringArrayLocal(json: string | null): string[] {
+  if (!json) return [];
+  try {
+    const v = JSON.parse(json);
+    return Array.isArray(v) ? v.filter((s): s is string => typeof s === "string") : [];
+  } catch {
+    return [];
   }
 }
 

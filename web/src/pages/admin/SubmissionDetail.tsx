@@ -67,7 +67,15 @@ interface Summary {
 }
 
 interface RatingResponse {
-  ai: { score: number; rationale: string; dimensions: Record<string, number> };
+  ai: {
+    score: number;
+    // Legacy paragraph rationale — only populated for older submissions.
+    // New ratings store strengths/improvements bullets instead.
+    rationale: string;
+    strengths: string[];
+    improvements: string[];
+    dimensions: Record<string, number>;
+  };
   admin: {
     score: number;
     rationale: string | null;
@@ -560,14 +568,49 @@ export function SubmissionDetail() {
             and never reaches Splynx. Edits here only affect future AI calibration.
           </p>
 
-          <div className="panel" style={{ background: "#0e1a14" }}>
-            <strong>AI's rating: {rating.ai.score}/10</strong>
-            <p style={{ whiteSpace: "pre-wrap", margin: "4px 0 0" }}>{rating.ai.rationale}</p>
-            <div className="muted" style={{ fontSize: "0.85em", marginTop: 4 }}>
-              {Object.entries(rating.ai.dimensions)
-                .map(([k, v]) => `${k}: ${v}`)
-                .join(" • ")}
+          <div className="panel elevated stack">
+            <div className="row" style={{ justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+              <strong>AI's rating: {rating.ai.score}/10</strong>
+              <span className="muted" style={{ fontSize: "0.85em" }}>
+                {Object.entries(rating.ai.dimensions)
+                  .map(([k, v]) => `${k}: ${v}`)
+                  .join(" • ")}
+              </span>
             </div>
+
+            {(rating.ai.strengths.length > 0 || rating.ai.improvements.length > 0) ? (
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
+                  gap: 16,
+                }}
+              >
+                <BulletColumn
+                  title="Done well"
+                  marker="✓"
+                  markerColor="#56d364"
+                  items={rating.ai.strengths}
+                  emptyHint="Nothing notable"
+                />
+                <BulletColumn
+                  title="Should have done"
+                  marker="→"
+                  markerColor="#ff7b72"
+                  items={rating.ai.improvements}
+                  emptyHint="No issues found"
+                />
+              </div>
+            ) : rating.ai.rationale ? (
+              // Legacy paragraph rationale on older submissions, before the
+              // strengths/improvements bullets were introduced.
+              <div>
+                <div className="muted" style={{ fontSize: "0.8em", textTransform: "uppercase", marginBottom: 4 }}>
+                  Notes (legacy)
+                </div>
+                <p style={{ whiteSpace: "pre-wrap", margin: 0 }}>{rating.ai.rationale}</p>
+              </div>
+            ) : null}
           </div>
 
           <div className="stack">
@@ -711,6 +754,65 @@ function statusBadge(s: string): string {
   if (s === "success") return "badge success";
   if (s === "failed") return "badge danger";
   return "badge warn";
+}
+
+function BulletColumn({
+  title,
+  marker,
+  markerColor,
+  items,
+  emptyHint,
+}: {
+  title: string;
+  marker: string;
+  markerColor: string;
+  items: string[];
+  emptyHint: string;
+}) {
+  return (
+    <div>
+      <div
+        className="muted"
+        style={{
+          fontSize: "0.78em",
+          textTransform: "uppercase",
+          letterSpacing: "0.04em",
+          marginBottom: 6,
+          fontWeight: 600,
+        }}
+      >
+        {title}
+      </div>
+      {items.length === 0 ? (
+        <div className="muted" style={{ fontSize: "0.9em", fontStyle: "italic" }}>
+          {emptyHint}
+        </div>
+      ) : (
+        <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+          {items.map((it, i) => (
+            <li
+              key={i}
+              style={{
+                display: "flex",
+                gap: 8,
+                alignItems: "flex-start",
+                padding: "4px 0",
+                lineHeight: 1.4,
+              }}
+            >
+              <span
+                style={{ color: markerColor, fontWeight: 700, flexShrink: 0, marginTop: 1 }}
+                aria-hidden="true"
+              >
+                {marker}
+              </span>
+              <span>{it}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
 }
 
 function currentSummary(submission: Submission): Summary | null {

@@ -266,20 +266,28 @@ function persistRating(
   rating: InternalRating,
 ): void {
   const now = Date.now();
+  // ai_rationale stays NOT NULL — write empty string for the new bullet-
+  // shaped ratings. Legacy paragraph rationales on older submissions are
+  // preserved as-is (UI shows them under a "Notes (legacy)" fallback).
   db.prepare(
     `INSERT INTO submission_ratings
-       (submission_id, ai_score, ai_rationale, ai_dimensions_json, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?)
+       (submission_id, ai_score, ai_rationale, ai_dimensions_json,
+        ai_strengths_json, ai_improvements_json, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(submission_id) DO UPDATE SET
        ai_score = excluded.ai_score,
        ai_rationale = excluded.ai_rationale,
        ai_dimensions_json = excluded.ai_dimensions_json,
+       ai_strengths_json = excluded.ai_strengths_json,
+       ai_improvements_json = excluded.ai_improvements_json,
        updated_at = excluded.updated_at`,
   ).run(
     submissionId,
     rating.score,
-    rating.rationale,
+    "",
     JSON.stringify(rating.dimensions),
+    JSON.stringify(rating.strengths),
+    JSON.stringify(rating.improvements),
     now,
     now,
   );

@@ -87,7 +87,12 @@ export type RatingDimensions = z.infer<typeof RatingDimensionsSchema>;
 
 export const InternalRatingSchema = z.object({
   score: z.number().int().min(1).max(10),
-  rationale: z.string().min(1),
+  // What the tech got right and what they should have done. Both arrays
+  // are concise, action-oriented bullets — replaces the previous
+  // free-form `rationale` paragraph. AI is constrained to ≤ 5 entries
+  // each but typically returns 2–3.
+  strengths: z.array(z.string().min(1)).max(5).default([]),
+  improvements: z.array(z.string().min(1)).max(5).default([]),
   dimensions: RatingDimensionsSchema,
 });
 export type InternalRating = z.infer<typeof InternalRatingSchema>;

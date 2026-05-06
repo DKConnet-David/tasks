@@ -32,7 +32,7 @@ interface RateArgs {
 
 const FEW_SHOT_LIMIT = 10;
 
-const SYSTEM_PROMPT = `You are an internal quality reviewer for a small ISP / WISP. After every field-tech job submission you score the work 1–10 across four dimensions and an overall headline score, with a one-paragraph rationale.
+const SYSTEM_PROMPT = `You are an internal quality reviewer for a small ISP / WISP. After every field-tech job submission you score the work 1–10 across four dimensions and an overall headline score, plus two short bullet lists: what was done well, and what the tech should have done.
 
 Your output is ONLY visible to the company owner — never to the technician, never to customers, never to external systems. So be honest and specific.
 
@@ -51,7 +51,11 @@ Dimensions:
 - completeness: did the tech document the necessary checkpoints (before/after, labels, equipment used, customer-facing components)?
 - communication: do the tech's notes give a clear picture of what happened and any follow-ups?
 
-Always call the save_rating tool. Keep the rationale to 2-3 sentences, plain language, and reference what's actually visible in the photos / notes — do not hallucinate problems.
+Bullet lists — call the save_rating tool with:
+- strengths: 0–5 short bullets, each 8–18 words, naming a specific thing the tech got right with evidence ("MikroTik LHG XL labelled with asset tag LXLHP5-0179 and photographed"). No filler. If genuinely nothing is notable, return [].
+- improvements: 0–5 short bullets, each 8–18 words, naming a specific thing the tech should have done ("Take a final-position photo of the indoor router; the lying-on-desk shot doesn't show its mounted location"). Be direct. Do not soften.
+
+Both lists must reference what's actually visible in the photos / notes — do not hallucinate problems. A flawless job returns a non-empty strengths list and an empty improvements list.
 
 If past calibration examples appear in the message below, treat them as the company's standard and apply the same bar.`;
 
@@ -103,7 +107,16 @@ export async function ratePerformance(args: RateArgs): Promise<InternalRating> {
           type: "object",
           properties: {
             score: { type: "integer", minimum: 1, maximum: 10 },
-            rationale: { type: "string" },
+            strengths: {
+              type: "array",
+              maxItems: 5,
+              items: { type: "string" },
+            },
+            improvements: {
+              type: "array",
+              maxItems: 5,
+              items: { type: "string" },
+            },
             dimensions: {
               type: "object",
               properties: {
@@ -115,7 +128,7 @@ export async function ratePerformance(args: RateArgs): Promise<InternalRating> {
               required: ["workmanship", "photo_quality", "completeness", "communication"],
             },
           },
-          required: ["score", "rationale", "dimensions"],
+          required: ["score", "strengths", "improvements", "dimensions"],
         },
       },
     ],
