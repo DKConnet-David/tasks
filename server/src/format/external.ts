@@ -77,26 +77,23 @@ export function formatWhatsAppCaption(
   const lines: string[] = [];
   lines.push(`*${summary.headline}*`);
 
+  // Technician sits at the top of the bullets (the "who" submitted the
+  // job, naturally heads the overview). Account sits at the bottom — it's
+  // the back-office identifier for the customer, useful but not the lead
+  // detail. Both are WhatsApp-only: inside Splynx the customer record is
+  // already on screen, so adding them to the Splynx comment is redundant.
+  const techNameTrim = techName.trim();
+  const accountTrim = (customerLogin ?? "").trim();
   const overviewItems = overviewLines(summary.overview);
-  // The Technician + Account lines are prepended only on the WhatsApp
-  // side: inside Splynx the customer record is already on screen, so the
-  // bullets there would be redundant. The team viewing the WhatsApp group
-  // doesn't have that context.
-  const headerBullets: [string, string][] = [];
-  if (techName.trim()) headerBullets.push(["Technician", techName.trim()]);
-  if (customerLogin && customerLogin.trim()) {
-    headerBullets.push(["Account", customerLogin.trim()]);
-  }
 
-  if (overviewItems.length > 0 || headerBullets.length > 0) {
+  if (overviewItems.length > 0 || techNameTrim || accountTrim) {
     lines.push("");
     lines.push("*Job/Task Overview*");
-    for (const [label, value] of headerBullets) {
-      lines.push(`• ${label}: ${value}`);
-    }
+    if (techNameTrim) lines.push(`• Technician: ${techNameTrim}`);
     for (const [label, value] of overviewItems) {
       lines.push(`• ${label}: ${value}`);
     }
+    if (accountTrim) lines.push(`• Account: ${accountTrim}`);
   } else if (task.address) {
     // Fallback for legacy summaries with no overview at all.
     lines.push(`📍 ${task.address}`);

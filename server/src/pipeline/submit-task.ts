@@ -207,6 +207,10 @@ export async function runSubmissionPipeline(args: PipelineArgs): Promise<Pipelin
 
   if (pdfBuffer && summary) {
     try {
+      log.info(
+        { submissionId, techName: appLogin, customerLogin },
+        "WhatsApp caption inputs",
+      );
       const caption = formatWhatsAppCaption(
         summary,
         task,
