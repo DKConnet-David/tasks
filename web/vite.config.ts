@@ -8,12 +8,20 @@ export default defineConfig({
     VitePWA({
       registerType: "autoUpdate",
       includeAssets: ["favicon.svg"],
+      // Without this denylist the service worker's SPA navigation fallback
+      // (index.html) intercepts requests like /api/submissions/.../photos/foo.jpg
+      // and serves the React app's HTML in place of the JPEG — clicking a
+      // photo "redirects to a funny link" instead of showing the image.
+      // Excluding /api/ and /health/ lets those requests hit the network.
+      workbox: {
+        navigateFallbackDenylist: [/^\/api\//, /^\/health/],
+      },
       manifest: {
         name: "Task Upater",
         short_name: "Tasks",
         description: "Field-tech task updater",
-        theme_color: "#0b3d91",
-        background_color: "#0b3d91",
+        theme_color: "#0a0d12",
+        background_color: "#0a0d12",
         display: "standalone",
         start_url: "/",
         icons: [
