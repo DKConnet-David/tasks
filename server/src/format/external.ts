@@ -62,25 +62,43 @@ export function formatSplynxComment(
  * PDF, and a link straight to the task in Splynx. The attached PDF still
  * carries the full report (work completed / photos analysis / materials /
  * issues+notes), but this gives the group enough overview at a glance.
+ *
+ * `customerLogin` is the Splynx customer.login (e.g. "ANJA001"). Pass null
+ * if the customer record is unavailable — the Account bullet is then
+ * skipped rather than rendered as "Account: —".
  */
 export function formatWhatsAppCaption(
   summary: ExternalSummary,
   task: TaskSubset,
   techName: string,
   splynxBaseUrl: string,
+  customerLogin: string | null,
 ): string {
   const lines: string[] = [];
   lines.push(`*${summary.headline}*`);
 
   const overviewItems = overviewLines(summary.overview);
-  if (overviewItems.length > 0) {
+  // The Technician + Account lines are prepended only on the WhatsApp
+  // side: inside Splynx the customer record is already on screen, so the
+  // bullets there would be redundant. The team viewing the WhatsApp group
+  // doesn't have that context.
+  const headerBullets: [string, string][] = [];
+  if (techName.trim()) headerBullets.push(["Technician", techName.trim()]);
+  if (customerLogin && customerLogin.trim()) {
+    headerBullets.push(["Account", customerLogin.trim()]);
+  }
+
+  if (overviewItems.length > 0 || headerBullets.length > 0) {
     lines.push("");
     lines.push("*Job/Task Overview*");
+    for (const [label, value] of headerBullets) {
+      lines.push(`• ${label}: ${value}`);
+    }
     for (const [label, value] of overviewItems) {
       lines.push(`• ${label}: ${value}`);
     }
   } else if (task.address) {
-    // Fallback for legacy summaries with no overview.
+    // Fallback for legacy summaries with no overview at all.
     lines.push(`📍 ${task.address}`);
     lines.push(`Task #${task.id}  •  ${techName}`);
   }

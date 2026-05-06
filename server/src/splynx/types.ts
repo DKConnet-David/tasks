@@ -67,3 +67,14 @@ export interface SplynxFileRef {
   url?: string;
   // Schema is best-guess until we observe a non-empty `files[]` from the live tenant.
 }
+
+/**
+ * Customer record subset — only the fields we currently need. The full
+ * record has dozens of billing/contact fields; we read just `login` (the
+ * customer-facing account code) and `name` for fallback display.
+ */
+export interface SplynxCustomerRaw {
+  id: number;
+  login: string;
+  name: string;
+}

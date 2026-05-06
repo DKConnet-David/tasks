@@ -269,17 +269,36 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
         return reply.code(404).send({ error: "pdf_not_found" });
       }
 
-      const task = await getServiceSplynxClient(config).getTaskRaw(sub.task_id).catch(() => null);
+      const splynxClient = getServiceSplynxClient(config);
+      const task = await splynxClient.getTaskRaw(sub.task_id).catch(() => null);
       const taskShape = {
         id: sub.task_id,
         title: task?.title ?? "",
         address: task?.address ?? "",
       };
 
+      // Customer login for the Account bullet on the WhatsApp caption.
+      // Best-effort: a missing customer record just suppresses the line.
+      let customerLogin: string | null = null;
+      if (task?.related_customer_id) {
+        try {
+          const customer = await splynxClient.getCustomer(task.related_customer_id);
+          customerLogin = customer.login || null;
+        } catch {
+          // ignore — caption falls back without the Account bullet
+        }
+      }
+
       try {
         const result = await pipelineSendDocument({
           config,
-          caption: formatWhatsAppCaption(summary, taskShape, sub.app_login, config.SPLYNX_BASE_URL),
+          caption: formatWhatsAppCaption(
+            summary,
+            taskShape,
+            sub.app_login,
+            config.SPLYNX_BASE_URL,
+            customerLogin,
+          ),
           pdfBuffer,
           fileName: `task-${sub.task_id}-submission-${sub.id}.pdf`,
         });

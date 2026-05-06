@@ -190,9 +190,30 @@ export async function runSubmissionPipeline(args: PipelineArgs): Promise<Pipelin
   // admin UI; only the Splynx-side per-photo attach step was dropped.
 
   // ---- 4. WhatsApp: send caption + PDF to the configured group ----
+  // Fetch the Splynx customer login (e.g. "ANJA001") so the WhatsApp caption
+  // can show the account code on the team's group view. Failure is non-fatal:
+  // a missing customer record or a Splynx hiccup just suppresses the Account
+  // bullet, it doesn't block the WhatsApp send.
+  let customerLogin: string | null = null;
+  if (task.related_customer_id) {
+    try {
+      const splynx = getServiceSplynxClient(config);
+      const customer = await splynx.getCustomer(task.related_customer_id);
+      customerLogin = customer.login || null;
+    } catch (err) {
+      log.warn({ err, customerId: task.related_customer_id }, "customer lookup failed (non-fatal)");
+    }
+  }
+
   if (pdfBuffer && summary) {
     try {
-      const caption = formatWhatsAppCaption(summary, task, appLogin, config.SPLYNX_BASE_URL);
+      const caption = formatWhatsAppCaption(
+        summary,
+        task,
+        appLogin,
+        config.SPLYNX_BASE_URL,
+        customerLogin,
+      );
       const fileName = `task-${taskId}-submission-${submissionId}.pdf`;
       const result = await pipelineSendDocument({
         config,

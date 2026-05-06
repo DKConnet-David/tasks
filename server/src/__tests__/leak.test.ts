@@ -150,6 +150,7 @@ describe("rating containment (leak test)", () => {
       task,
       "lorenzo",
       "https://clientzone.dkconnect.co.za",
+      "ANJA001",
     );
     expect(caption).not.toContain(RATING_RATIONALE_NEEDLE);
     expect(caption).not.toContain(ADMIN_NEEDLE);
@@ -169,6 +170,7 @@ describe("rating containment (leak test)", () => {
       task,
       "lorenzo",
       "https://clientzone.dkconnect.co.za",
+      "ANJA001",
     );
     const allOutputs = [html, htmlUpdate, caption].join("\n");
 

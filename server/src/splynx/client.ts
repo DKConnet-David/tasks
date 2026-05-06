@@ -1,7 +1,7 @@
 import axios, { type AxiosInstance, type AxiosRequestConfig } from "axios";
 import FormData from "form-data";
 import type { SplynxTask } from "../types.js";
-import type { SplynxCommentRaw, SplynxTaskRaw } from "./types.js";
+import type { SplynxCommentRaw, SplynxCustomerRaw, SplynxTaskRaw } from "./types.js";
 
 /**
  * Splynx REST wrapper.
@@ -96,6 +96,20 @@ export class SplynxClient {
 
   async getTask(id: number): Promise<SplynxTask> {
     return mapTask(await this.getTaskRaw(id));
+  }
+
+  // --- Customers ---
+
+  /**
+   * Read a single customer record. Used to surface the customer's `login`
+   * (their account code, e.g. ANJA001) in WhatsApp captions so the team
+   * sees which account a job belongs to without opening Splynx.
+   */
+  async getCustomer(id: number): Promise<SplynxCustomerRaw> {
+    const { data } = await this.http.get<SplynxCustomerRaw>(
+      `/api/2.0/admin/customers/customer/${id}`,
+    );
+    return data;
   }
 
   // --- Comments ---
