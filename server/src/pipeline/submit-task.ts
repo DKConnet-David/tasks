@@ -217,6 +217,10 @@ export async function runSubmissionPipeline(args: PipelineArgs): Promise<Pipelin
         appLogin,
         config.SPLYNX_BASE_URL,
         customerLogin,
+        // Pipeline runs immediately after the submission row is inserted,
+        // so "now" tracks submission.created_at within ~1s — close enough
+        // for an HH:MM display.
+        new Date(),
       );
       const fileName = `task-${taskId}-submission-${submissionId}.pdf`;
       const result = await pipelineSendDocument({

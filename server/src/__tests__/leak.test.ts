@@ -163,6 +163,7 @@ describe("rating containment (leak test)", () => {
       "lorenzo",
       "https://clientzone.dkconnect.co.za",
       "ANJA001",
+      new Date("2026-04-29T12:45:00+02:00"),
     );
     expectNoRatingLeak(caption);
   });
@@ -181,6 +182,7 @@ describe("rating containment (leak test)", () => {
       "lorenzo",
       "https://clientzone.dkconnect.co.za",
       "ANJA001",
+      new Date("2026-04-29T12:45:00+02:00"),
     );
     const allOutputs = [html, htmlUpdate, caption].join("\n");
 

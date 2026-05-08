@@ -66,6 +66,12 @@ export function formatSplynxComment(
  * `customerLogin` is the Splynx customer.login (e.g. "ANJA001"). Pass null
  * if the customer record is unavailable — the Account bullet is then
  * skipped rather than rendered as "Account: —".
+ *
+ * `submittedAt` is the actual moment the tech hit submit. Pass null to
+ * skip the bullet entirely (legacy / synthetic captions). The pipeline
+ * call site passes `new Date()`; the admin resend path passes the
+ * submission's original `created_at` so resends keep the original
+ * timestamp rather than re-stamping to "now".
  */
 export function formatWhatsAppCaption(
   summary: ExternalSummary,
@@ -73,6 +79,7 @@ export function formatWhatsAppCaption(
   techName: string,
   splynxBaseUrl: string,
   customerLogin: string | null,
+  submittedAt: Date | null,
 ): string {
   const lines: string[] = [];
   lines.push(`*${summary.headline}*`);
@@ -85,14 +92,18 @@ export function formatWhatsAppCaption(
   const techNameTrim = techName.trim();
   const accountTrim = (customerLogin ?? "").trim();
   const overviewItems = overviewLines(summary.overview);
+  const submittedLabel = submittedAt ? formatSubmittedAt(submittedAt) : "";
 
-  if (overviewItems.length > 0 || techNameTrim || accountTrim) {
+  if (overviewItems.length > 0 || techNameTrim || accountTrim || submittedLabel) {
     lines.push("");
     lines.push("*Job/Task Overview*");
-    if (techNameTrim) lines.push(`• Technician: ${techNameTrim}`);
+    // Tech name is wrapped in WhatsApp's *bold* markers so the operator's
+    // eye lands on the name itself when scanning a group of bullets.
+    if (techNameTrim) lines.push(`• Technician: *${techNameTrim}*`);
     for (const [label, value] of overviewItems) {
       lines.push(`• ${label}: ${value}`);
     }
+    if (submittedLabel) lines.push(`• Submitted at: ${submittedLabel}`);
     if (accountTrim) lines.push(`• Account: ${accountTrim}`);
   } else if (task.address) {
     // Fallback for legacy summaries with no overview at all.
@@ -103,6 +114,18 @@ export function formatWhatsAppCaption(
   lines.push("");
   lines.push(`🔗 ${splynxTaskUrl(splynxBaseUrl, task.id)}`);
   return lines.join("\n");
+}
+
+/**
+ * Render a Date as `YYYY-MM-DD HH:MM` in the container's local timezone.
+ * The container's `TZ` env var (Africa/Johannesburg in production) drives
+ * the field accessors here, so the output matches what the operator
+ * sees on the wall clock. Same shape as the AI-generated `Date:` bullet
+ * so WhatsApp's auto-styling treats it consistently.
+ */
+function formatSubmittedAt(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 /**

@@ -311,6 +311,10 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
             sub.app_login,
             config.SPLYNX_BASE_URL,
             customerLogin,
+            // Resends keep the *original* submission timestamp rather
+            // than re-stamping to "now" — otherwise "Submitted at" would
+            // misleadingly drift forward each time admin re-fires.
+            new Date(sub.created_at),
           ),
           pdfBuffer,
           fileName: `task-${sub.task_id}-submission-${sub.id}.pdf`,
@@ -915,13 +919,15 @@ interface MinimalSubmission {
   corrected_summary_json: string | null;
   splynx_comment_id: number | null;
   admin_resolved: number;
+  created_at: number;
 }
 
 function loadSubmission(db: ReturnType<typeof getDb>, id: number): MinimalSubmission | null {
   const row = db
     .prepare(
       `SELECT id, task_id, app_login, splynx_admin_id, comment, tech_comment_override,
-              summary_json, corrected_summary_json, splynx_comment_id, admin_resolved
+              summary_json, corrected_summary_json, splynx_comment_id, admin_resolved,
+              created_at
        FROM submissions WHERE id = ?`,
     )
     .get(id) as MinimalSubmission | undefined;
