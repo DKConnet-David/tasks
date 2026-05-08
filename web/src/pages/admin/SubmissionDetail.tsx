@@ -69,6 +69,15 @@ interface Summary {
   // as the caption in the photo lightbox so the operator gets the AI's
   // read on each image without leaving the page.
   photo_descriptions?: string[];
+  // Job-card check from the summarize AI step. Drives the 🚩 Flags panel.
+  // Optional so legacy submissions (without the field in summary_json)
+  // still parse — the Flags panel just hides for those.
+  job_card?: {
+    job_card_found: boolean;
+    customer_signature_present: boolean;
+    workmanship_satisfaction: "Y" | "N" | "unknown";
+    work_satisfaction: "Y" | "N" | "unknown";
+  };
 }
 
 interface RatingResponse {
@@ -357,6 +366,8 @@ export function SubmissionDetail() {
           </pre>
         )}
       </div>
+
+      <FlagsPanel jobCard={summary?.job_card} />
 
       {okMessage && <div className="panel success">{okMessage}</div>}
       {error && <div className="panel danger">{error}</div>}
@@ -784,6 +795,68 @@ function statusBadge(s: string): string {
   if (s === "success") return "badge success";
   if (s === "failed") return "badge danger";
   return "badge warn";
+}
+
+/**
+ * Render the same flag bullets the WhatsApp / Splynx / PDF surfaces show.
+ * Hidden entirely on legacy submissions (no job_card on the summary) and
+ * on submissions where the AI found nothing wrong — both render as zero
+ * flags. Mirrors deriveJobCardFlags() in server/src/format/external.ts.
+ */
+function FlagsPanel({
+  jobCard,
+}: {
+  jobCard: NonNullable<Summary["job_card"]> | undefined;
+}) {
+  if (!jobCard) return null;
+  const flags: string[] = [];
+  if (!jobCard.job_card_found) {
+    flags.push("No job card photo found");
+  } else {
+    if (!jobCard.customer_signature_present) flags.push("No customer signature on job card");
+    if (jobCard.workmanship_satisfaction === "N") flags.push("Workmanship marked N on job card");
+    if (jobCard.work_satisfaction === "N")
+      flags.push("Customer not satisfied with work (marked N on job card)");
+  }
+  if (flags.length === 0) return null;
+
+  return (
+    <div
+      className="panel stack"
+      style={{
+        background: "rgba(255, 123, 114, 0.08)",
+        border: "1px solid rgba(255, 123, 114, 0.3)",
+      }}
+    >
+      <div className="row" style={{ alignItems: "center", gap: 8 }}>
+        <span style={{ fontSize: "1.2em" }} aria-hidden>
+          🚩
+        </span>
+        <h3 style={{ margin: 0, color: "var(--c-danger)" }}>
+          Flags ({flags.length})
+        </h3>
+      </div>
+      <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+        {flags.map((f, i) => (
+          <li
+            key={i}
+            style={{
+              display: "flex",
+              gap: 8,
+              alignItems: "flex-start",
+              padding: "4px 0",
+              lineHeight: 1.4,
+            }}
+          >
+            <span style={{ color: "var(--c-danger)", fontWeight: 700 }} aria-hidden>
+              •
+            </span>
+            <span>{f}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
 }
 
 function BulletColumn({

@@ -36,6 +36,13 @@ STRUCTURED (drive the PDF report):
 - materials: an ARRAY of equipment / materials used (one per item). Include model numbers and pricing where shown. Examples: "LiteBeam 5AC outdoor antenna (LBAC 23-FTUA)", "Reyee EW300-PRO router (R 500.00)", "Pole mounting hardware".
 - issues_notes: an ARRAY of any issues encountered, deviations, or notable observations. Examples: "Client not on site during completion", "Client told people on the yard where technician mounted router". Empty array if there's nothing remarkable.
 
+- job_card: an object with the four fields below, ALWAYS populated. Inspect every photo carefully looking for a paper "job card" form. The DK Connect job card has a header row of checkboxes (New Install / Takeover Install / Relocation / Repair / Additional / SS), customer details, a parts/items table, a "Notes" section, and at the bottom a "To be completed by client" section with three Y/N rows and a signature line.
+  - job_card_found (boolean): true ONLY when you can clearly see this form (or an equivalent paper job card) in any photo. False if no card is visible.
+  - customer_signature_present (boolean): true ONLY when there is a clearly visible handwritten signature, scribble, printed name, or X mark on the customer signature line at the bottom of the card. If the line is blank, the area is cropped out, or the signature is illegible/uncertain, return false. Bias to false on any doubt — the operator wants false positives over missed unsigned cards.
+  - workmanship_satisfaction ("Y" | "N" | "unknown"): read the row labelled "Is the quality of workmanship to your satisfaction?" Return "Y" only on a clear yes mark (Y / ✓ / yes / tick); "N" only on a clear no mark (N / ✗ / no / cross); "unknown" when blank, illegible, or not visible.
+  - work_satisfaction ("Y" | "N" | "unknown"): same rules, for the row labelled "Are you satisfied with the work that has been done and requested?"
+  When job_card_found is false, set the other three fields to false / "unknown" — do not guess.
+
 - job_type: classify the job into ONE of these categories. Pick the best fit:
   - "install"            new wireless / fibre install at a new client site
   - "call_out"           reactive support visit to fix something for an existing client (slow, no link, equipment fault)
@@ -141,6 +148,27 @@ export async function summarize(args: SummarizeArgs): Promise<ExternalSummary> {
                 "other",
               ],
             },
+            job_card: {
+              type: "object",
+              properties: {
+                job_card_found: { type: "boolean" },
+                customer_signature_present: { type: "boolean" },
+                workmanship_satisfaction: {
+                  type: "string",
+                  enum: ["Y", "N", "unknown"],
+                },
+                work_satisfaction: {
+                  type: "string",
+                  enum: ["Y", "N", "unknown"],
+                },
+              },
+              required: [
+                "job_card_found",
+                "customer_signature_present",
+                "workmanship_satisfaction",
+                "work_satisfaction",
+              ],
+            },
           },
           required: [
             "headline",
@@ -153,6 +181,7 @@ export async function summarize(args: SummarizeArgs): Promise<ExternalSummary> {
             "materials",
             "issues_notes",
             "job_type",
+            "job_card",
           ],
         },
       },

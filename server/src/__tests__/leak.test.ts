@@ -48,6 +48,12 @@ const summary: ExternalSummary = {
     "router-before-replacement",
     "ew3000gx-powered-up",
   ],
+  job_card: {
+    job_card_found: true,
+    customer_signature_present: true,
+    workmanship_satisfaction: "Y",
+    work_satisfaction: "Y",
+  },
 };
 
 // These strings are deliberately distinctive so their presence in any

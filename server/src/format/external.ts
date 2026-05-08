@@ -1,4 +1,4 @@
-import type { ExternalSummary } from "../types.js";
+import type { ExternalSummary, JobCardCheck } from "../types.js";
 
 /**
  * Formatters for outbound payloads (Splynx comment HTML, WhatsApp caption).
@@ -41,6 +41,14 @@ export function formatSplynxComment(
     parts.push("<br><br><strong>Job/Task Overview</strong>");
     for (const [label, value] of overviewItems) {
       parts.push(`<br>• <strong>${escapeHtml(label)}:</strong> ${escapeHtml(value)}`);
+    }
+  }
+
+  const flags = deriveJobCardFlags(summary.job_card);
+  if (flags.length > 0) {
+    parts.push("<br><br><strong>🚩 Flags</strong>");
+    for (const f of flags) {
+      parts.push(`<br>• ${escapeHtml(f)}`);
     }
   }
 
@@ -111,6 +119,15 @@ export function formatWhatsAppCaption(
     lines.push(`Task #${task.id}  •  ${techName}`);
   }
 
+  const flags = deriveJobCardFlags(summary.job_card);
+  if (flags.length > 0) {
+    lines.push("");
+    lines.push("*🚩 Flags*");
+    for (const f of flags) {
+      lines.push(`• ${f}`);
+    }
+  }
+
   lines.push("");
   lines.push(`🔗 ${splynxTaskUrl(splynxBaseUrl, task.id)}`);
   return lines.join("\n");
@@ -133,6 +150,38 @@ function formatSubmittedAt(d: Date): string {
  * and the WhatsApp caption. Empty fields are skipped, so legacy submissions
  * (where the AI didn't fill the overview) just get an empty list back.
  */
+/**
+ * Derive the "🚩 Flags" bullet list from the AI's job-card check.
+ *
+ * Returns an empty list when the check is missing (legacy submissions
+ * predating the field) so the Flags block is silently omitted in those
+ * cases. New submissions always populate `job_card`, so an empty list
+ * here means "card is fine, signature visible, both Y answers" — which
+ * is the desired no-flag state.
+ *
+ * Exported so the PDF generator and the admin UI render exactly the
+ * same flag text as the WhatsApp / Splynx outputs.
+ */
+export function deriveJobCardFlags(check: JobCardCheck | undefined): string[] {
+  if (!check) return [];
+  if (!check.job_card_found) {
+    // No card photographed at all — the rest of the fields are unreliable
+    // by definition, so we don't pile on. One clear flag is enough.
+    return ["No job card photo found"];
+  }
+  const flags: string[] = [];
+  if (!check.customer_signature_present) {
+    flags.push("No customer signature on job card");
+  }
+  if (check.workmanship_satisfaction === "N") {
+    flags.push("Workmanship marked N on job card");
+  }
+  if (check.work_satisfaction === "N") {
+    flags.push("Customer not satisfied with work (marked N on job card)");
+  }
+  return flags;
+}
+
 function overviewLines(
   overview: ExternalSummary["overview"],
 ): [label: string, value: string][] {

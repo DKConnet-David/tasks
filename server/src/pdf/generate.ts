@@ -1,6 +1,7 @@
 import PDFDocument from "pdfkit";
 import type { ExternalSummary } from "../types.js";
 import type { SplynxTaskRaw } from "../splynx/types.js";
+import { deriveJobCardFlags } from "../format/external.js";
 
 interface GeneratePdfArgs {
   task: SplynxTaskRaw;
@@ -19,6 +20,7 @@ const HEADING_COLOR = "#0b1116";
 const LABEL_COLOR = "#0b1116";
 const BODY_COLOR = "#1c1f23";
 const MUTED_COLOR = "#5b6066";
+const FLAG_COLOR = "#c5221f"; // red, for the 🚩 Flags section
 
 /**
  * Render the Job Completion Summary PDF. Sections are skipped automatically
@@ -70,6 +72,23 @@ export async function generatePdf(args: GeneratePdfArgs): Promise<Buffer> {
     if (ov.job_end_time.trim()) bulletLabel(doc, "Job End Time", ov.job_end_time);
     if (ov.job_duration.trim()) bulletLabel(doc, "Job Duration", ov.job_duration);
     doc.moveDown(0.6);
+
+    // Flags — only render when the AI surfaced job-card issues. Coloured
+    // red so the operator can't miss them while scanning the report.
+    const flags = deriveJobCardFlags(args.summary.job_card);
+    if (flags.length > 0) {
+      doc.font("Helvetica-Bold").fontSize(13).fillColor(FLAG_COLOR).text("🚩 Flags");
+      doc.moveDown(0.2);
+      for (const f of flags) {
+        doc
+          .font("Helvetica")
+          .fontSize(10)
+          .fillColor(FLAG_COLOR)
+          .text(`• ${f}`, { width: doc.page.width - 100 });
+      }
+      doc.fillColor(HEADING_COLOR);
+      doc.moveDown(0.6);
+    }
 
     // 2. Work Completed
     if (args.summary.work_completed.length > 0) {

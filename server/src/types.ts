@@ -14,6 +14,31 @@ import { z } from "zod";
  * payload-string level so future refactors can't smuggle rating text out.
  */
 
+/**
+ * Per-submission analysis of the paper "job card" the customer signs on
+ * site. Populated by the summarize AI step when it inspects the photos.
+ *
+ * This is OBSERVATIONAL data (signature visible, Y/N tick marks) — not
+ * rating data — so it lives on ExternalSummary and is allowed to flow to
+ * WhatsApp / Splynx / PDF. The flags derived from it are surfaced under
+ * a "🚩 Flags" block on every external surface so the operator notices
+ * unsigned cards or N answers without scrolling through all the photos.
+ */
+export const JobCardCheckSchema = z.object({
+  // True only when a recognisable paper job card is visible in any photo.
+  job_card_found: z.boolean(),
+  // True only with a clearly visible signature on the signature line.
+  // Default-to-false bias: ambiguous → flagged. Operator would rather get
+  // a false positive than miss a missing signature.
+  customer_signature_present: z.boolean(),
+  // The two specific Y/N rows the operator wants enforced. "Y" only on a
+  // clear yes mark; "N" only on a clear no mark; "unknown" for blank /
+  // illegible / not visible.
+  workmanship_satisfaction: z.enum(["Y", "N", "unknown"]),
+  work_satisfaction: z.enum(["Y", "N", "unknown"]),
+});
+export type JobCardCheck = z.infer<typeof JobCardCheckSchema>;
+
 export const JobOverviewSchema = z.object({
   service_type: z.string().default(""),
   client_name: z.string().default(""),
@@ -74,6 +99,12 @@ export const ExternalSummarySchema = z.object({
 
   // Short slug per photo, for Splynx attachment filenames.
   photo_captions: z.array(z.string()).default([]),
+
+  // Job-card check (signature + Y/N answers). Optional so legacy
+  // summary_json rows in the DB still parse cleanly — those just won't
+  // have the Flags block rendered. New AI calls always populate this
+  // (the tool schema in summarize.ts marks it required).
+  job_card: JobCardCheckSchema.optional(),
 });
 export type ExternalSummary = z.infer<typeof ExternalSummarySchema>;
 
