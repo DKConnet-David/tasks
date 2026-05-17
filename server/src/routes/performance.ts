@@ -363,7 +363,8 @@ export async function registerPerformanceRoutes(
       const jobTypeCounts: Record<string, number> = {};
       const jobTypeSamples: Record<string, number[]> = {};
 
-      // Recent submissions list (last 20).
+      // Submissions list for the period (built oldest-first; reversed
+      // to newest-first below before sending).
       const recent: SubmissionForListing[] = [];
 
       for (const row of rows) {
@@ -492,9 +493,10 @@ export async function registerPerformanceRoutes(
         // need a separate hourly-aggregation endpoint. Just numbers, so
         // even hundreds of entries weigh next to nothing.
         submission_timestamps_ms: rows.map((r) => r.created_at),
-        // Most recent first, capped to 20 — full list available via the
-        // existing /admin/submissions endpoint with login filter.
-        recent_submissions: recent.slice(-20).reverse(),
+        // Every submission in the selected period, most recent first.
+        // No cap — operator wants the full month list visible without
+        // jumping to the global /admin/submissions view.
+        recent_submissions: [...recent].reverse(),
       });
     },
   );

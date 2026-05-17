@@ -1214,9 +1214,15 @@ function PatternResultDisplay({ pattern }: { pattern: Pattern }) {
 
 function RecentSubmissionsPanel({ data }: { data: ProfileResponse }) {
   if (data.recent_submissions.length === 0) return null;
+  const count = data.recent_submissions.length;
   return (
     <div className="panel stack">
-      <h3 style={{ margin: 0 }}>Recent submissions</h3>
+      <h3 style={{ margin: 0 }}>
+        Submissions{" "}
+        <span className="muted" style={{ fontWeight: 400, fontSize: "0.75em" }}>
+          ({count})
+        </span>
+      </h3>
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.9em" }}>
         <thead>
           <tr style={{ textAlign: "left", color: "var(--c-muted)" }}>
