@@ -18,9 +18,86 @@ import { getServiceSplynxClient, isSplynxConfigured } from "../splynx/service-cl
  * gated by requireAdmin; no public exposure.
  */
 
-const PeriodSchema = z
-  .enum(["this_month", "last_30", "this_quarter", "all"])
-  .default("this_month");
+/**
+ * Period selector for the performance dashboard.
+ *
+ * Accepts either `"all"` (lifetime) or a calendar month string in `YYYY-MM`
+ * form (e.g. `"2026-05"`). The legacy values `"this_month"`, `"last_30"`,
+ * and `"this_quarter"` were retired when the dropdown moved to a month
+ * picker — the route now defaults to the current calendar month when
+ * the query string is absent or unparseable.
+ */
+const MonthKeyRegex = /^\d{4}-(0[1-9]|1[0-2])$/;
+
+type ParsedPeriod =
+  | { kind: "all" }
+  | { kind: "month"; year: number; month: number /* 1-12 */ };
+
+function parsePeriod(raw: string | undefined): ParsedPeriod {
+  if (raw === "all") return { kind: "all" };
+  if (raw && MonthKeyRegex.test(raw)) {
+    const [yStr, mStr] = raw.split("-");
+    return { kind: "month", year: Number(yStr), month: Number(mStr) };
+  }
+  // Default — current calendar month in server local TZ.
+  const now = new Date();
+  return { kind: "month", year: now.getFullYear(), month: now.getMonth() + 1 };
+}
+
+function periodBounds(p: ParsedPeriod): { since: number; endExclusive: number } {
+  if (p.kind === "all") {
+    return { since: 0, endExclusive: Number.MAX_SAFE_INTEGER };
+  }
+  const since = new Date(p.year, p.month - 1, 1).getTime();
+  const endExclusive = new Date(p.year, p.month, 1).getTime();
+  return { since, endExclusive };
+}
+
+function periodLabel(p: ParsedPeriod): string {
+  if (p.kind === "all") return "all time";
+  const d = new Date(p.year, p.month - 1, 1);
+  return d.toLocaleString("en-ZA", { month: "long", year: "numeric" });
+}
+
+function monthKey(year: number, month: number): string {
+  return `${year}-${String(month).padStart(2, "0")}`;
+}
+
+function periodKeyOut(p: ParsedPeriod): string {
+  return p.kind === "all" ? "all" : monthKey(p.year, p.month);
+}
+
+/**
+ * Distinct calendar months containing at least one (non-hidden) submission,
+ * newest first. Pass `null` to scope across all techs (used by the team-
+ * overview endpoint) or an `app_login` to scope to a single tech (used by
+ * the per-tech profile endpoint).
+ *
+ * Returned as `YYYY-MM` strings so the frontend can render them as the
+ * dropdown options (and convert to a friendlier label client-side).
+ */
+function listAvailableMonths(
+  db: ReturnType<typeof getDb>,
+  appLogin: string | null,
+): string[] {
+  const rows = appLogin
+    ? (db
+        .prepare(`SELECT created_at FROM submissions WHERE hidden = 0 AND app_login = ?`)
+        .all(appLogin) as { created_at: number }[])
+    : (db
+        .prepare(`SELECT created_at FROM submissions WHERE hidden = 0`)
+        .all() as { created_at: number }[]);
+  const seen = new Set<string>();
+  for (const r of rows) {
+    const d = new Date(r.created_at);
+    seen.add(monthKey(d.getFullYear(), d.getMonth() + 1));
+  }
+  // Always include the current month, so the dropdown isn't empty on the
+  // 1st of a month before anyone has submitted.
+  const now = new Date();
+  seen.add(monthKey(now.getFullYear(), now.getMonth() + 1));
+  return Array.from(seen).sort((a, b) => b.localeCompare(a));
+}
 
 interface DimensionScores {
   workmanship: number;
@@ -76,10 +153,9 @@ export async function registerPerformanceRoutes(
   // Team overview: one row per tech, with rolled-up score for the period.
   // ---------------------------------------------------------------
   app.get("/admin/performance/techs", { preHandler: requireAdmin }, async (req, reply) => {
-    const period = PeriodSchema.parse(
-      (req.query as { period?: string }).period ?? "this_month",
-    );
-    const since = periodStart(period);
+    const period = parsePeriod((req.query as { period?: string }).period);
+    const { since, endExclusive } = periodBounds(period);
+    const availableMonths = listAvailableMonths(db, null);
 
     // Pull the raw rows in the period; group + average in JS rather than
     // SQL because we need to (a) prefer admin over AI, and (b) decode the
@@ -91,9 +167,9 @@ export async function registerPerformanceRoutes(
                 r.ai_dimensions_json, r.admin_dimensions_json
          FROM submissions s
          LEFT JOIN submission_ratings r ON r.submission_id = s.id
-         WHERE s.created_at >= ? AND s.hidden = 0`,
+         WHERE s.created_at >= ? AND s.created_at < ? AND s.hidden = 0`,
       )
-      .all(since) as Array<{
+      .all(since, endExclusive) as Array<{
       app_login: string;
       created_at: number;
       ai_score: number | null;
@@ -189,8 +265,10 @@ export async function registerPerformanceRoutes(
     }
 
     return reply.send({
-      period,
+      period: periodKeyOut(period),
+      period_label: periodLabel(period),
       since,
+      available_months: availableMonths,
       techs: Array.from(byTech.values()).sort((a, b) =>
         a.app_login.localeCompare(b.app_login),
       ),
@@ -207,11 +285,10 @@ export async function registerPerformanceRoutes(
     { preHandler: requireAdmin },
     async (req, reply) => {
       const { login } = req.params as { login: string };
-      const period = PeriodSchema.parse(
-        (req.query as { period?: string }).period ?? "this_month",
-      );
-      const since = periodStart(period);
-      const periodLabel = periodLabelFor(period, since);
+      const period = parsePeriod((req.query as { period?: string }).period);
+      const { since, endExclusive } = periodBounds(period);
+      const periodLabelStr = periodLabel(period);
+      const availableMonths = listAvailableMonths(db, login);
 
       const rows = db
         .prepare(
@@ -221,10 +298,11 @@ export async function registerPerformanceRoutes(
                   r.ai_dimensions_json, r.admin_dimensions_json
            FROM submissions s
            LEFT JOIN submission_ratings r ON r.submission_id = s.id
-           WHERE s.app_login = ? AND s.created_at >= ? AND s.hidden = 0
+           WHERE s.app_login = ? AND s.created_at >= ? AND s.created_at < ?
+             AND s.hidden = 0
            ORDER BY s.created_at ASC`,
         )
-        .all(login, since) as Array<
+        .all(login, since, endExclusive) as Array<
         Omit<SubmissionRow, "job_type"> & {
           summary_json: string | null;
           corrected_summary_json: string | null;
@@ -234,8 +312,9 @@ export async function registerPerformanceRoutes(
       if (rows.length === 0) {
         return reply.send({
           login,
-          period,
-          period_label: periodLabel,
+          period: periodKeyOut(period),
+          period_label: periodLabelStr,
+          available_months: availableMonths,
           job_count: 0,
           overall_score: null,
           dimensions: null,
@@ -395,8 +474,9 @@ export async function registerPerformanceRoutes(
 
       return reply.send({
         login,
-        period,
-        period_label: periodLabel,
+        period: periodKeyOut(period),
+        period_label: periodLabelStr,
+        available_months: availableMonths,
         job_count: rows.length,
         overall_score: overall,
         dimensions,
@@ -659,30 +739,6 @@ function endOfMonth(periodStartMs: number): number {
 }
 
 // ---------- helpers ----------
-
-function periodStart(period: z.infer<typeof PeriodSchema>): number {
-  const now = new Date();
-  if (period === "this_month") {
-    const d = new Date(now.getFullYear(), now.getMonth(), 1);
-    return d.getTime();
-  }
-  if (period === "last_30") {
-    return now.getTime() - 30 * 24 * 60 * 60 * 1000;
-  }
-  if (period === "this_quarter") {
-    const q = Math.floor(now.getMonth() / 3);
-    const d = new Date(now.getFullYear(), q * 3, 1);
-    return d.getTime();
-  }
-  return 0;
-}
-
-function periodLabelFor(period: z.infer<typeof PeriodSchema>, since: number): string {
-  if (period === "all") return "all time";
-  const d = new Date(since);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `since ${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-}
 
 function parseDims(json: string | null): DimensionScores | null {
   if (!json) return null;

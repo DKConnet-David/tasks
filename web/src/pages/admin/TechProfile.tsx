@@ -14,7 +14,22 @@ import {
 } from "recharts";
 import { ApiError, api } from "../../api";
 
-type Period = "this_month" | "last_30" | "this_quarter" | "all";
+// "all" or a YYYY-MM month string. The server returns the canonical list
+// of months in which this tech has submissions in `available_months`.
+type Period = string;
+
+function currentMonthKey(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function formatMonthLabel(ym: string): string {
+  // "2026-05" → "May 2026"
+  const [y, m] = ym.split("-").map(Number);
+  if (!y || !m) return ym;
+  const d = new Date(y, m - 1, 1);
+  return d.toLocaleString("en-ZA", { month: "long", year: "numeric" });
+}
 
 interface Dimensions {
   workmanship: number;
@@ -54,6 +69,7 @@ interface ProfileResponse {
   login: string;
   period: Period;
   period_label: string;
+  available_months: string[];
   job_count: number;
   overall_score: number | null;
   dimensions: Dimensions | null;
@@ -73,13 +89,6 @@ interface ProfileResponse {
   recent_submissions: RecentSubmission[];
 }
 
-const PERIOD_LABELS: Record<Period, string> = {
-  this_month: "This month",
-  last_30: "Last 30 days",
-  this_quarter: "This quarter",
-  all: "All time",
-};
-
 const DIM_LABELS = {
   workmanship: "Workmanship",
   photo_quality: "Photo Quality",
@@ -91,10 +100,9 @@ const DIM_KEYS = ["workmanship", "photo_quality", "completeness", "communication
 
 export function TechProfile() {
   const { login } = useParams<{ login: string }>();
-  // Default to a rolling window rather than calendar-month-to-date, so the
-  // profile doesn't look empty on the 1st of every month before anyone has
-  // submitted. Operator can still pick "This month" for monthly reviews.
-  const [period, setPeriod] = useState<Period>("last_30");
+  // Default to the current calendar month — selecting a different month
+  // re-bounds every panel below to that month only.
+  const [period, setPeriod] = useState<Period>(currentMonthKey());
   const [data, setData] = useState<ProfileResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -188,15 +196,16 @@ function Header({
       <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
         <select
           value={period}
-          onChange={(e) => setPeriod(e.target.value as Period)}
+          onChange={(e) => setPeriod(e.target.value)}
           style={{ width: "auto", minWidth: 160 }}
           aria-label="Reporting period"
         >
-          {(Object.keys(PERIOD_LABELS) as Period[]).map((p) => (
-            <option key={p} value={p}>
-              {PERIOD_LABELS[p]}
+          {(data.available_months ?? [period]).map((m) => (
+            <option key={m} value={m}>
+              {formatMonthLabel(m)}
             </option>
           ))}
+          <option value="all">All time</option>
         </select>
         <div style={{ textAlign: "right" }}>
           {data.overall_score !== null ? (
@@ -1023,12 +1032,16 @@ function PatternsPanel({ login, period }: { login: string; period: Period }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Patterns are scoped to a calendar month. The other periods don't have
-  // sensible month boundaries, so we hide the panel for them.
+  // Patterns are scoped to a calendar month. With month-based period
+  // selection any YYYY-MM is a valid month boundary; the "all" lifetime
+  // view has no single month to analyse, so the panel hides for it.
   const monthBoundary = useMemo(() => {
-    if (period !== "this_month") return null;
-    const now = new Date();
-    return new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+    if (period === "all") return null;
+    const match = period.match(/^(\d{4})-(\d{2})$/);
+    if (!match) return null;
+    const year = Number(match[1]);
+    const month = Number(match[2]);
+    return new Date(year, month - 1, 1).getTime();
   }, [period]);
 
   useEffect(() => {
@@ -1085,7 +1098,7 @@ function PatternsPanel({ login, period }: { login: string; period: Period }) {
     }
   }
 
-  if (period !== "this_month") {
+  if (monthBoundary === null) {
     return (
       <div
         className="panel stack"
@@ -1096,8 +1109,8 @@ function PatternsPanel({ login, period }: { login: string; period: Period }) {
           <span className="badge warn">admin-only</span>
         </div>
         <p className="muted">
-          Switch the period selector at the bottom to <strong>This month</strong> to use the
-          AI pattern analysis (it operates on calendar-month boundaries).
+          Switch to a specific month in the dropdown above to run the AI pattern analysis —
+          it operates on calendar-month boundaries.
         </p>
       </div>
     );

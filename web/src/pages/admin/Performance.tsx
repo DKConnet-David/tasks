@@ -2,7 +2,10 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { ApiError, api } from "../../api";
 
-type Period = "this_month" | "last_30" | "this_quarter" | "all";
+// "all" or a YYYY-MM month string. The server returns the canonical list
+// of months that have data in `available_months`; the dropdown is built
+// from that plus a synthetic "All time" entry at the bottom.
+type Period = string;
 
 interface Dimensions {
   workmanship: number;
@@ -21,24 +24,31 @@ interface Tech {
 
 interface OverviewResponse {
   period: Period;
+  period_label: string;
+  available_months: string[];
   since: number;
   techs: Tech[];
 }
 
-const PERIOD_LABELS: Record<Period, string> = {
-  this_month: "This month",
-  last_30: "Last 30 days",
-  this_quarter: "This quarter",
-  all: "All time",
-};
+function currentMonthKey(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function formatMonthLabel(ym: string): string {
+  // "2026-05" → "May 2026"
+  const [y, m] = ym.split("-").map(Number);
+  if (!y || !m) return ym;
+  const d = new Date(y, m - 1, 1);
+  return d.toLocaleString("en-ZA", { month: "long", year: "numeric" });
+}
 
 type SortKey = "login" | "jobs" | "score" | "last";
 
 export function Performance() {
-  // Default to a rolling window rather than calendar-month-to-date, so the
-  // dashboard doesn't look empty on the 1st of every month before anyone
-  // has submitted. Operator can still pick "This month" for monthly reviews.
-  const [period, setPeriod] = useState<Period>("last_30");
+  // Default to the current calendar month — selecting a different month
+  // re-bounds every panel below to that month only.
+  const [period, setPeriod] = useState<Period>(currentMonthKey());
   const [data, setData] = useState<OverviewResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [sort, setSort] = useState<{ key: SortKey; desc: boolean }>({ key: "score", desc: true });
@@ -70,14 +80,16 @@ export function Performance() {
           </div>
           <select
             value={period}
-            onChange={(e) => setPeriod(e.target.value as Period)}
+            onChange={(e) => setPeriod(e.target.value)}
             style={{ width: "auto", minWidth: 160 }}
+            aria-label="Reporting period"
           >
-            {(Object.keys(PERIOD_LABELS) as Period[]).map((p) => (
-              <option key={p} value={p}>
-                {PERIOD_LABELS[p]}
+            {(data?.available_months ?? [period]).map((m) => (
+              <option key={m} value={m}>
+                {formatMonthLabel(m)}
               </option>
             ))}
+            <option value="all">All time</option>
           </select>
         </div>
       </div>
