@@ -581,6 +581,27 @@ export async function registerPerformanceRoutes(
   );
 
   // ---------------------------------------------------------------
+  // DELETE /admin/performance/techs/:login/patterns?period_start=<unix-ms>
+  // Removes the cached pattern analysis for that month so the operator
+  // can start fresh. Idempotent — 200 even if no row existed.
+  // ---------------------------------------------------------------
+  app.delete(
+    "/admin/performance/techs/:login/patterns",
+    { preHandler: requireAdmin },
+    async (req, reply) => {
+      const { login } = req.params as { login: string };
+      const periodStartMs = Number((req.query as { period_start?: string }).period_start);
+      if (!Number.isFinite(periodStartMs) || periodStartMs <= 0) {
+        return reply.code(400).send({ error: "invalid_period_start" });
+      }
+      const result = db
+        .prepare(`DELETE FROM tech_patterns WHERE app_login = ? AND period_start = ?`)
+        .run(login, periodStartMs);
+      return reply.send({ deleted: result.changes });
+    },
+  );
+
+  // ---------------------------------------------------------------
   // POST /admin/performance/techs/:login/patterns/generate
   // body: { period_start: <unix-ms> }
   // Runs analyzePatterns(), upserts to tech_patterns, returns the result.

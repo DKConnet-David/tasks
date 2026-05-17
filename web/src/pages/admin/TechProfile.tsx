@@ -161,13 +161,13 @@ export function TechProfile() {
 
       <JobTypeBreakdownPanel data={data} />
 
-      <PatternsPanel login={login ?? ""} period={period} />
-
       <RecentSubmissionsPanel
         data={data}
         filter={filter}
         clearFilter={() => setSearchParams({})}
       />
+
+      <PatternsPanel login={login ?? ""} period={period} />
     </div>
   );
 }
@@ -1069,6 +1069,23 @@ function PatternsPanel({ login, period }: { login: string; period: Period }) {
       .finally(() => setLoading(false));
   }, [login, monthBoundary]);
 
+  async function clear() {
+    if (!login || monthBoundary === null || !pattern) return;
+    if (!confirm("Delete the analysis for this month? You can re-run it later.")) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api.delete(
+        `/admin/performance/techs/${encodeURIComponent(login)}/patterns?period_start=${monthBoundary}`,
+      );
+      setPattern(null);
+    } catch (e: unknown) {
+      setError(e instanceof ApiError ? `Clear failed (${e.status})` : "Network error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function generate() {
     if (!login || monthBoundary === null) return;
     if (
@@ -1148,10 +1165,15 @@ function PatternsPanel({ login, period }: { login: string; period: Period }) {
 
       {error && <div className="danger">{error}</div>}
 
-      <div className="row" style={{ gap: 8 }}>
+      <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
         <button onClick={generate} disabled={busy}>
-          {busy ? "Analysing…" : pattern ? "Re-analyse" : "Generate analysis"}
+          {busy ? "Working…" : pattern ? "Re-analyse" : "Generate analysis"}
         </button>
+        {pattern && (
+          <button onClick={clear} disabled={busy} className="secondary">
+            Clear analysis
+          </button>
+        )}
         {pattern && (
           <span className="muted" style={{ fontSize: "0.85em", alignSelf: "center" }}>
             Generated {new Date(pattern.generated_at).toLocaleString()} from{" "}
