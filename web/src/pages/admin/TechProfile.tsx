@@ -122,7 +122,7 @@ export function TechProfile() {
         <Link to="/admin/performance">← All techs</Link>
       </div>
 
-      <Header data={data} />
+      <Header data={data} period={period} setPeriod={setPeriod} />
 
       <div
         style={{
@@ -153,12 +153,44 @@ export function TechProfile() {
       <PatternsPanel login={login ?? ""} period={period} />
 
       <RecentSubmissionsPanel data={data} />
+    </div>
+  );
+}
 
-      <div className="panel">
+// ---------- panels ----------
+
+function Header({
+  data,
+  period,
+  setPeriod,
+}: {
+  data: ProfileResponse;
+  period: Period;
+  setPeriod: (p: Period) => void;
+}) {
+  return (
+    <div
+      className="panel"
+      style={{
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "center",
+        flexWrap: "wrap",
+        gap: 12,
+      }}
+    >
+      <div>
+        <h1 style={{ margin: 0 }}>{data.login}</h1>
+        <div className="muted" style={{ fontSize: "0.9em" }}>
+          {data.job_count} job{data.job_count === 1 ? "" : "s"} · {data.period_label}
+        </div>
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
         <select
           value={period}
           onChange={(e) => setPeriod(e.target.value as Period)}
           style={{ width: "auto", minWidth: 160 }}
+          aria-label="Reporting period"
         >
           {(Object.keys(PERIOD_LABELS) as Period[]).map((p) => (
             <option key={p} value={p}>
@@ -166,28 +198,8 @@ export function TechProfile() {
             </option>
           ))}
         </select>
-        <span className="muted" style={{ marginLeft: 8, fontSize: "0.9em" }}>
-          {data.period_label}
-        </span>
-      </div>
-    </div>
-  );
-}
-
-// ---------- panels ----------
-
-function Header({ data }: { data: ProfileResponse }) {
-  return (
-    <div className="panel" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
-      <div>
-        <h1 style={{ margin: 0 }}>{data.login}</h1>
-        <div className="muted" style={{ fontSize: "0.9em" }}>
-          {data.job_count} job{data.job_count === 1 ? "" : "s"} · {data.period_label}
-        </div>
-      </div>
-      <div style={{ textAlign: "right" }}>
-        {data.overall_score !== null ? (
-          <>
+        <div style={{ textAlign: "right" }}>
+          {data.overall_score !== null ? (
             <div
               style={{
                 fontSize: "2.6em",
@@ -202,10 +214,10 @@ function Header({ data }: { data: ProfileResponse }) {
                 /10
               </span>
             </div>
-          </>
-        ) : (
-          <span className="muted">No rated submissions</span>
-        )}
+          ) : (
+            <span className="muted">No rated submissions</span>
+          )}
+        </div>
       </div>
     </div>
   );
