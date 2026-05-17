@@ -71,6 +71,7 @@ interface ProfileResponse {
   period_label: string;
   available_months: string[];
   job_count: number;
+  late_submissions: number;
   overall_score: number | null;
   dimensions: Dimensions | null;
   consistency: {
@@ -463,7 +464,7 @@ function ActivityHeatmapPanel({ data }: { data: ProfileResponse; period: Period 
   }
 
   const maxCount = Math.max(...cells.map((c) => c.count), 1);
-  const stats = `${data.job_count} submissions · ${data.active_days ?? cells.length} active days · ${data.jobs_per_active_day.toFixed(1)} avg/active day`;
+  const stats = `${data.job_count} submissions · ${data.active_days ?? cells.length} active days · ${data.jobs_per_active_day.toFixed(1)} avg/active day · ${data.late_submissions} after 5:30 PM`;
 
   return (
     <div className="panel stack">

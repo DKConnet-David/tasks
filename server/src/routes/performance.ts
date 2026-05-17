@@ -112,6 +112,21 @@ interface TechRow {
   overall_score: number | null;
   dimensions: DimensionScores | null;
   last_submission_at: number | null;
+  late_submissions: number;
+}
+
+// 17:30 in the container's local timezone (Africa/Johannesburg via the
+// TZ env var). Submissions whose created_at hour/minute land at or
+// after this point are counted as "late" on the dashboard — used as a
+// rough indicator of how often a tech is still working after 5:30 PM.
+const LATE_HOUR = 17;
+const LATE_MIN = 30;
+
+function isLate(createdAt: number): boolean {
+  const d = new Date(createdAt);
+  const h = d.getHours();
+  const m = d.getMinutes();
+  return h > LATE_HOUR || (h === LATE_HOUR && m >= LATE_MIN);
 }
 
 interface SubmissionRow {
@@ -193,6 +208,7 @@ export async function registerPerformanceRoutes(
         overall_score: null,
         dimensions: null,
         last_submission_at: null,
+        late_submissions: 0,
       });
     }
 
@@ -206,6 +222,7 @@ export async function registerPerformanceRoutes(
         dimCount: number;
         latestAt: number;
         jobCount: number;
+        lateCount: number;
       }
     >();
 
@@ -219,11 +236,13 @@ export async function registerPerformanceRoutes(
           dimCount: 0,
           latestAt: 0,
           jobCount: 0,
+          lateCount: 0,
         };
         accum.set(row.app_login, a);
       }
       a.jobCount += 1;
       if (row.created_at > a.latestAt) a.latestAt = row.created_at;
+      if (isLate(row.created_at)) a.lateCount += 1;
 
       const score = row.admin_score ?? row.ai_score;
       if (score !== null) {
@@ -248,6 +267,7 @@ export async function registerPerformanceRoutes(
         overall_score: null,
         dimensions: null,
         last_submission_at: null,
+        late_submissions: 0,
       };
       tech.job_count = a.jobCount;
       tech.overall_score = a.scoreCount > 0 ? a.scoreSum / a.scoreCount : null;
@@ -261,6 +281,7 @@ export async function registerPerformanceRoutes(
             }
           : null;
       tech.last_submission_at = a.latestAt || null;
+      tech.late_submissions = a.lateCount;
       byTech.set(login, tech);
     }
 
@@ -316,6 +337,7 @@ export async function registerPerformanceRoutes(
           period_label: periodLabelStr,
           available_months: availableMonths,
           job_count: 0,
+          late_submissions: 0,
           overall_score: null,
           dimensions: null,
           consistency: null,
@@ -339,6 +361,7 @@ export async function registerPerformanceRoutes(
       const trends: Trend[] = [];
       let scoreSum = 0;
       let scoreCount = 0;
+      let lateCount = 0;
       const dimSum: DimensionScores = {
         workmanship: 0,
         photo_quality: 0,
@@ -368,6 +391,7 @@ export async function registerPerformanceRoutes(
       const recent: SubmissionForListing[] = [];
 
       for (const row of rows) {
+        if (isLate(row.created_at)) lateCount += 1;
         const score = row.admin_score ?? row.ai_score;
         const dims = parseDims(row.admin_dimensions_json) ?? parseDims(row.ai_dimensions_json);
 
@@ -479,6 +503,7 @@ export async function registerPerformanceRoutes(
         period_label: periodLabelStr,
         available_months: availableMonths,
         job_count: rows.length,
+        late_submissions: lateCount,
         overall_score: overall,
         dimensions,
         consistency,

@@ -20,6 +20,10 @@ interface Tech {
   overall_score: number | null;
   dimensions: Dimensions | null;
   last_submission_at: number | null;
+  // Count of submissions in the selected period whose timestamp lands
+  // at or after 17:30 in the server's local timezone. Indicator of how
+  // often the tech is still working after 5:30 PM.
+  late_submissions: number;
 }
 
 interface OverviewResponse {
@@ -43,7 +47,7 @@ function formatMonthLabel(ym: string): string {
   return d.toLocaleString("en-ZA", { month: "long", year: "numeric" });
 }
 
-type SortKey = "login" | "jobs" | "score" | "last";
+type SortKey = "login" | "jobs" | "score" | "last" | "late";
 
 export function Performance() {
   // Default to the current calendar month — selecting a different month
@@ -113,6 +117,23 @@ export function Performance() {
                   <th style={th()}>Photo qty</th>
                   <th style={th()}>Completeness</th>
                   <th style={th()}>Communication</th>
+                  <th
+                    style={{
+                      ...th(),
+                      textAlign: "right",
+                      cursor: "pointer",
+                      userSelect: "none",
+                    }}
+                    onClick={() =>
+                      setSort({
+                        key: "late",
+                        desc: sort.key === "late" ? !sort.desc : true,
+                      })
+                    }
+                    title="Submissions after 5:30 PM in the selected period"
+                  >
+                    Late{sort.key === "late" ? (sort.desc ? " ↓" : " ↑") : ""}
+                  </th>
                   <Th label="Last activity" sortKey="last" sort={sort} setSort={setSort} />
                 </tr>
               </thead>
@@ -138,6 +159,13 @@ export function Performance() {
                     <DimCell value={t.dimensions?.photo_quality} />
                     <DimCell value={t.dimensions?.completeness} />
                     <DimCell value={t.dimensions?.communication} />
+                    <td style={{ ...td(), textAlign: "right" }}>
+                      {t.late_submissions > 0 ? (
+                        <strong>{t.late_submissions}</strong>
+                      ) : (
+                        <span className="muted">0</span>
+                      )}
+                    </td>
                     <td style={td()}>
                       {t.last_submission_at
                         ? new Date(t.last_submission_at).toLocaleString()
@@ -212,6 +240,7 @@ function sortTechs(techs: Tech[], sort: { key: SortKey; desc: boolean }): Tech[]
     else if (sort.key === "score") cmp = (a.overall_score ?? -1) - (b.overall_score ?? -1);
     else if (sort.key === "last")
       cmp = (a.last_submission_at ?? 0) - (b.last_submission_at ?? 0);
+    else if (sort.key === "late") cmp = a.late_submissions - b.late_submissions;
     return sort.desc ? -cmp : cmp;
   });
   return copy;
