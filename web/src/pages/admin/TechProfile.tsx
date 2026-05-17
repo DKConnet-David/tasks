@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import {
   CartesianGrid,
   Legend,
@@ -106,6 +106,8 @@ export function TechProfile() {
   const [period, setPeriod] = useState<Period>(currentMonthKey());
   const [data, setData] = useState<ProfileResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const filter = searchParams.get("filter");
 
   useEffect(() => {
     if (!login) return;
@@ -161,7 +163,11 @@ export function TechProfile() {
 
       <PatternsPanel login={login ?? ""} period={period} />
 
-      <RecentSubmissionsPanel data={data} />
+      <RecentSubmissionsPanel
+        data={data}
+        filter={filter}
+        clearFilter={() => setSearchParams({})}
+      />
     </div>
   );
 }
@@ -1213,9 +1219,29 @@ function PatternResultDisplay({ pattern }: { pattern: Pattern }) {
   );
 }
 
-function RecentSubmissionsPanel({ data }: { data: ProfileResponse }) {
+function RecentSubmissionsPanel({
+  data,
+  filter,
+  clearFilter,
+}: {
+  data: ProfileResponse;
+  filter: string | null;
+  clearFilter: () => void;
+}) {
   if (data.recent_submissions.length === 0) return null;
-  const count = data.recent_submissions.length;
+  // Late = created_at hour/minute ≥ 17:30 in the viewer's local time. The
+  // server uses the same rule against its TZ (Africa/Johannesburg); since
+  // submissions render in local time too, this stays visually consistent.
+  const rows =
+    filter === "late"
+      ? data.recent_submissions.filter((s) => {
+          const d = new Date(s.created_at);
+          const h = d.getHours();
+          const m = d.getMinutes();
+          return h > 17 || (h === 17 && m >= 30);
+        })
+      : data.recent_submissions;
+  const count = rows.length;
   return (
     <div className="panel stack">
       <h3 style={{ margin: 0 }}>
@@ -1224,6 +1250,31 @@ function RecentSubmissionsPanel({ data }: { data: ProfileResponse }) {
           ({count})
         </span>
       </h3>
+      {filter === "late" && (
+        <div
+          className="row"
+          style={{
+            justifyContent: "space-between",
+            alignItems: "center",
+            padding: "8px 12px",
+            background: "rgba(227, 179, 65, 0.12)",
+            border: "1px solid rgba(227, 179, 65, 0.4)",
+            borderRadius: "var(--r)",
+            fontSize: "0.9em",
+          }}
+        >
+          <span>
+            Showing {count} submission{count === 1 ? "" : "s"} after 5:30 PM.
+          </span>
+          <button
+            className="secondary"
+            onClick={clearFilter}
+            style={{ padding: "4px 10px", fontSize: "0.85em" }}
+          >
+            Clear filter
+          </button>
+        </div>
+      )}
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.9em" }}>
         <thead>
           <tr style={{ textAlign: "left", color: "var(--c-muted)" }}>
@@ -1235,7 +1286,7 @@ function RecentSubmissionsPanel({ data }: { data: ProfileResponse }) {
           </tr>
         </thead>
         <tbody>
-          {data.recent_submissions.map((s) => (
+          {rows.map((s) => (
             <tr key={s.id} style={{ borderTop: "1px solid var(--c-border)" }}>
               <td style={{ padding: "8px 8px" }}>
                 <Link to={`/admin/submissions/${s.id}`}>

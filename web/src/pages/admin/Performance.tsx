@@ -161,7 +161,12 @@ export function Performance() {
                     <DimCell value={t.dimensions?.communication} />
                     <td style={{ ...td(), textAlign: "right" }}>
                       {t.late_submissions > 0 ? (
-                        <strong>{t.late_submissions}</strong>
+                        <Link
+                          to={`/admin/performance/${encodeURIComponent(t.app_login)}?filter=late`}
+                          title="Show only late submissions for this period"
+                        >
+                          <strong>{t.late_submissions}</strong>
+                        </Link>
                       ) : (
                         <span className="muted">0</span>
                       )}
