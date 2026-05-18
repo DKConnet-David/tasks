@@ -56,12 +56,15 @@ export type JobOverview = z.infer<typeof JobOverviewSchema>;
 // dropdown — keep the list small.
 export const JobTypeSchema = z
   .enum([
-    "install",
-    "call_out",
-    "upgrade",
-    "cable_replacement",
-    "maintenance",
-    "diagnostic",
+    "ftua_installation",
+    "site_survey",
+    "fibre_los_inspection",
+    "layer2_fibre_setup",
+    "extender_installation",
+    "antenna_move",
+    "offline_connection",
+    "internal_issues_callout",
+    "complaint",
     "other",
   ])
   .default("other");

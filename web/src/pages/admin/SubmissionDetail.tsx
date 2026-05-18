@@ -24,12 +24,15 @@ interface Submission {
 }
 
 const JOB_TYPES = [
-  { value: "install", label: "Install" },
-  { value: "call_out", label: "Call-out" },
-  { value: "upgrade", label: "Upgrade" },
-  { value: "cable_replacement", label: "Cable Replacement" },
-  { value: "maintenance", label: "Maintenance" },
-  { value: "diagnostic", label: "Diagnostic" },
+  { value: "ftua_installation", label: "FTUA Installation" },
+  { value: "site_survey", label: "Site Survey" },
+  { value: "fibre_los_inspection", label: "Fibre LOS Inspection" },
+  { value: "layer2_fibre_setup", label: "Layer2 Fibre Setup" },
+  { value: "extender_installation", label: "Extender Installation" },
+  { value: "antenna_move", label: "Antenna Move" },
+  { value: "offline_connection", label: "Offline Connection" },
+  { value: "internal_issues_callout", label: "Internal Issues Call-Out" },
+  { value: "complaint", label: "Complaint" },
   { value: "other", label: "Other" },
 ] as const;
 

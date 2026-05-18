@@ -43,7 +43,7 @@ const summary: ExternalSummary = {
   ],
   materials: ["Reyee EW3000GX router"],
   issues_notes: ["No issues encountered"],
-  job_type: "call_out",
+  job_type: "ftua_installation",
   photo_captions: [
     "router-before-replacement",
     "ew3000gx-powered-up",

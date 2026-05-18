@@ -45,13 +45,17 @@ STRUCTURED (drive the PDF report):
   When job_card_found is false, set the other three fields to false / "unknown" — do not guess.
 
 - job_type: classify the job into ONE of these categories. Pick the best fit:
-  - "install"            new wireless / fibre install at a new client site
-  - "call_out"           reactive support visit to fix something for an existing client (slow, no link, equipment fault)
-  - "upgrade"            existing client moves to better hardware / faster package
-  - "cable_replacement"  repairing or replacing damaged / aged cable runs
-  - "maintenance"        scheduled preventative work (firmware, cleanup, audits)
-  - "diagnostic"         purely investigative visit, no work performed
-  - "other"              genuinely doesn't fit any of the above
+  - "ftua_installation"        new FTUA (fixed terminal user antenna) wireless install at a client site — outdoor antenna mounted, dish aligned, indoor router configured
+  - "site_survey"              any survey visit before an install — signal checks, line-of-sight assessment, equipment recommendation, photographing the proposed mount points
+  - "fibre_los_inspection"     fibre line-of-sight inspection at a property — checking the fibre route, splice points, and termination feasibility
+  - "layer2_fibre_setup"       configuring the L2 fibre handoff — splicing, ONT install, switch / router setup on a delivered fibre service
+  - "extender_installation"    adding a wifi extender, mesh node, or additional AP at an existing client site for coverage
+  - "antenna_move"             relocating or re-aiming an existing client antenna / radio (the "connection move" scenario — same client, different aim or mounting point)
+  - "offline_connection"       reactive visit specifically because the client is fully offline — link is down, dead radio, no link light
+  - "internal_issues_callout"  reactive visit for issues *while online* — poor wifi coverage inside the premises, intermittent drops, slow speeds, single-room dead spots
+  - "complaint"                visit driven by a client complaint that doesn't cleanly fit the technical buckets above — billing dispute on site, equipment damage claim, attitude/quality complaint follow-up
+  - "other"                    genuinely doesn't fit any of the above
+
   Decide from the task title, description, and photos. If genuinely ambiguous between two, prefer the more specific one over "other".
 
 CRITICAL: photo_descriptions MUST contain exactly the same number of entries as the number of photos provided. Never short the array — if a photo is unclear, write what you can see ("Equipment closeup, content unclear") rather than skipping it.
@@ -143,12 +147,15 @@ export async function summarize(args: SummarizeArgs): Promise<ExternalSummary> {
             job_type: {
               type: "string",
               enum: [
-                "install",
-                "call_out",
-                "upgrade",
-                "cable_replacement",
-                "maintenance",
-                "diagnostic",
+                "ftua_installation",
+                "site_survey",
+                "fibre_los_inspection",
+                "layer2_fibre_setup",
+                "extender_installation",
+                "antenna_move",
+                "offline_connection",
+                "internal_issues_callout",
+                "complaint",
                 "other",
               ],
             },

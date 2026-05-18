@@ -1358,9 +1358,28 @@ function heatColor(count: number, max: number): string {
   return `hsl(${hue}deg ${sat}% ${light}%)`;
 }
 
+// Display labels for the closed job_type enum (server/src/types.ts).
+// Hardcoded rather than computed so acronyms (FTUA, LOS, L2) render
+// correctly and the wording matches the admin "Edit job type" dropdown.
+const JOB_TYPE_LABELS: Record<string, string> = {
+  ftua_installation: "FTUA Installation",
+  site_survey: "Site Survey",
+  fibre_los_inspection: "Fibre LOS Inspection",
+  layer2_fibre_setup: "Layer2 Fibre Setup",
+  extender_installation: "Extender Installation",
+  antenna_move: "Antenna Move",
+  offline_connection: "Offline Connection",
+  internal_issues_callout: "Internal Issues Call-Out",
+  complaint: "Complaint",
+  other: "Other",
+};
+
 function prettyType(t: string): string {
-  return t
-    .split("_")
-    .map((s) => s[0]?.toUpperCase() + s.slice(1))
-    .join(" ");
+  return (
+    JOB_TYPE_LABELS[t] ??
+    t
+      .split("_")
+      .map((s) => s[0]?.toUpperCase() + s.slice(1))
+      .join(" ")
+  );
 }
