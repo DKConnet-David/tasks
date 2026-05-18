@@ -297,6 +297,57 @@ export async function registerPerformanceRoutes(
   });
 
   // ---------------------------------------------------------------
+  // GET /admin/performance/secondary-techs?period=YYYY-MM | all
+  // Leaderboard for the "helper" roster. A "job" here = a submission
+  // where the helper was tagged on the join table. Names from the
+  // secondary_techs table — disabled rows still appear if they have
+  // historical tags in the period, so the count never silently drops.
+  // ---------------------------------------------------------------
+  app.get(
+    "/admin/performance/secondary-techs",
+    { preHandler: requireAdmin },
+    async (req, reply) => {
+      const period = parsePeriod((req.query as { period?: string }).period);
+      const { since, endExclusive } = periodBounds(period);
+
+      const rows = db
+        .prepare(
+          `SELECT st.id, st.name, st.is_active,
+                  COUNT(*) AS job_count,
+                  MAX(s.created_at) AS last_submission_at
+           FROM submission_secondary_techs sst
+           JOIN secondary_techs st ON st.id = sst.secondary_tech_id
+           JOIN submissions s ON s.id = sst.submission_id
+           WHERE s.created_at >= ? AND s.created_at < ?
+             AND s.hidden = 0
+           GROUP BY st.id, st.name, st.is_active
+           ORDER BY job_count DESC, st.name COLLATE NOCASE ASC`,
+        )
+        .all(since, endExclusive) as Array<{
+        id: number;
+        name: string;
+        is_active: number;
+        job_count: number;
+        last_submission_at: number | null;
+      }>;
+
+      return reply.send({
+        period: periodKeyOut(period),
+        period_label: periodLabel(period),
+        available_months: listAvailableMonths(db, null),
+        since,
+        techs: rows.map((r) => ({
+          id: r.id,
+          name: r.name,
+          is_active: r.is_active === 1,
+          job_count: r.job_count,
+          last_submission_at: r.last_submission_at,
+        })),
+      });
+    },
+  );
+
+  // ---------------------------------------------------------------
   // GET /admin/performance/techs/:login?period=this_month
   // Per-tech detail: header, dimension scores, score time series,
   // distribution buckets, activity heatmap data, recent submissions.

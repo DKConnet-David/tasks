@@ -28,13 +28,16 @@ export function formatSplynxComment(
   summary: ExternalSummary,
   techName: string,
   isUpdate: boolean,
+  secondaryTechNames?: string[],
 ): string {
   const parts: string[] = [];
   if (isUpdate) {
     parts.push(`<em>[Updated by admin ${new Date().toLocaleString("en-ZA")}]</em><br><br>`);
   }
   parts.push(`<strong>${escapeHtml(summary.headline)}</strong>`);
-  parts.push(`<br><em>Submitted by ${escapeHtml(techName)} via Task Updater</em>`);
+  const helpers = (secondaryTechNames ?? []).map((s) => s.trim()).filter(Boolean);
+  const withClause = helpers.length > 0 ? ` with ${escapeHtml(helpers.join(", "))}` : "";
+  parts.push(`<br><em>Submitted by ${escapeHtml(techName)}${withClause} via Task Updater</em>`);
 
   const overviewItems = overviewLines(summary.overview);
   if (overviewItems.length > 0) {
@@ -88,6 +91,7 @@ export function formatWhatsAppCaption(
   splynxBaseUrl: string,
   customerLogin: string | null,
   submittedAt: Date | null,
+  secondaryTechNames?: string[],
 ): string {
   const lines: string[] = [];
   lines.push(`*${summary.headline}*`);
@@ -101,13 +105,18 @@ export function formatWhatsAppCaption(
   const accountTrim = (customerLogin ?? "").trim();
   const overviewItems = overviewLines(summary.overview);
   const submittedLabel = submittedAt ? formatSubmittedAt(submittedAt) : "";
+  // Helpers ride alongside the primary tech bullet, rendered in italics so
+  // the primary name still leads visually. Empty / disabled / unknown names
+  // are filtered upstream — we trust the array we receive.
+  const helpers = (secondaryTechNames ?? []).map((s) => s.trim()).filter(Boolean);
+  const techLineSuffix = helpers.length > 0 ? ` _(with ${helpers.join(", ")})_` : "";
 
   if (overviewItems.length > 0 || techNameTrim || accountTrim || submittedLabel) {
     lines.push("");
     lines.push("*Job/Task Overview*");
     // Tech name is wrapped in WhatsApp's *bold* markers so the operator's
     // eye lands on the name itself when scanning a group of bullets.
-    if (techNameTrim) lines.push(`• Technician: *${techNameTrim}*`);
+    if (techNameTrim) lines.push(`• Technician: *${techNameTrim}*${techLineSuffix}`);
     for (const [label, value] of overviewItems) {
       lines.push(`• ${label}: ${value}`);
     }

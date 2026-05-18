@@ -10,6 +10,7 @@ import { SubmissionDetail } from "./pages/admin/SubmissionDetail";
 import { ManualSubmit } from "./pages/admin/ManualSubmit";
 import { WhatsAppPanel } from "./pages/admin/WhatsAppPanel";
 import { TechsPage } from "./pages/admin/TechsPage";
+import { SecondaryTechsPage } from "./pages/admin/SecondaryTechsPage";
 import { AdminsPage } from "./pages/admin/AdminsPage";
 import { Performance } from "./pages/admin/Performance";
 import { TechProfile } from "./pages/admin/TechProfile";
@@ -30,6 +31,7 @@ export function App() {
           <Route path="manual" element={<ManualSubmit />} />
           <Route path="whatsapp" element={<WhatsAppPanel />} />
           <Route path="techs" element={<TechsPage />} />
+          <Route path="secondary-techs" element={<SecondaryTechsPage />} />
           <Route path="admins" element={<AdminsPage />} />
           <Route path="performance" element={<Performance />} />
           <Route path="performance/:login" element={<TechProfile />} />

@@ -36,6 +36,11 @@ interface SubmitResponse {
   photos_failed: number;
 }
 
+interface SecondaryTech {
+  id: number;
+  name: string;
+}
+
 export function TaskDetail() {
   const { id } = useParams<{ id: string }>();
   const nav = useNavigate();
@@ -50,6 +55,8 @@ export function TaskDetail() {
   const [uploadFraction, setUploadFraction] = useState<number | null>(null);
   const [uploadLoaded, setUploadLoaded] = useState(0);
   const [uploadTotal, setUploadTotal] = useState(0);
+  const [secondaryTechRoster, setSecondaryTechRoster] = useState<SecondaryTech[]>([]);
+  const [selectedSecondaryIds, setSelectedSecondaryIds] = useState<number[]>([]);
   const submitting = phase === "uploading" || phase === "processing";
 
   useEffect(() => {
@@ -74,6 +81,16 @@ export function TaskDetail() {
       .finally(() => setLoading(false));
   }, [id]);
 
+  // Fetch the active secondary-tech roster once on mount. Best-effort — if
+  // it 401s or the network drops we render no chip row and the form keeps
+  // working exactly as it did before this feature shipped.
+  useEffect(() => {
+    api
+      .get<{ secondary_techs: SecondaryTech[] }>("/secondary-techs")
+      .then((r) => setSecondaryTechRoster(r.secondary_techs))
+      .catch(() => setSecondaryTechRoster([]));
+  }, []);
+
   // Revoke object URLs on unmount to avoid leaking blob memory.
   useEffect(() => {
     return () => {
@@ -97,6 +114,9 @@ export function TaskDetail() {
     try {
       const fd = new FormData();
       fd.append("comment", comment);
+      if (selectedSecondaryIds.length > 0) {
+        fd.append("secondary_tech_ids", selectedSecondaryIds.join(","));
+      }
       for (const p of photos) fd.append("photos", p.file, p.file.name || "photo.jpg");
 
       const res = await api.upload<SubmitResponse>(`/tasks/${id}/submit`, fd, {
@@ -218,6 +238,15 @@ export function TaskDetail() {
       <div className="panel stack">
         <PhotoCapture photos={photos} onChange={setPhotos} disabled={submitting} />
 
+        {secondaryTechRoster.length > 0 && (
+          <SecondaryTechChips
+            roster={secondaryTechRoster}
+            selected={selectedSecondaryIds}
+            onChange={setSelectedSecondaryIds}
+            disabled={submitting}
+          />
+        )}
+
         <label className="stack" style={{ gap: 4 }}>
           <span className="muted">Notes (what was done, what was used, anything notable)</span>
           <textarea
@@ -264,6 +293,51 @@ export function TaskDetail() {
           </div>
         </>
       )}
+    </div>
+  );
+}
+
+function SecondaryTechChips({
+  roster,
+  selected,
+  onChange,
+  disabled,
+}: {
+  roster: SecondaryTech[];
+  selected: number[];
+  onChange: (ids: number[]) => void;
+  disabled: boolean;
+}) {
+  function toggle(id: number) {
+    if (selected.includes(id)) onChange(selected.filter((i) => i !== id));
+    else onChange([...selected, id]);
+  }
+  return (
+    <div className="stack" style={{ gap: 6 }}>
+      <span className="muted" style={{ fontSize: "0.9em" }}>
+        Working with anyone? Tap to tag.
+      </span>
+      <div className="row" style={{ flexWrap: "wrap", gap: 6 }}>
+        {roster.map((t) => {
+          const on = selected.includes(t.id);
+          return (
+            <button
+              key={t.id}
+              type="button"
+              disabled={disabled}
+              onClick={() => toggle(t.id)}
+              className={on ? "" : "secondary"}
+              style={{
+                padding: "6px 12px",
+                fontSize: "0.9em",
+                borderRadius: 999,
+              }}
+            >
+              {on ? "✓ " : ""}{t.name}
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }

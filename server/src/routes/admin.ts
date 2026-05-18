@@ -220,7 +220,8 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
     if (sub.splynx_comment_id && isSplynxConfigured(config)) {
       try {
         const splynx = getServiceSplynxClient(config);
-        const body = formatSplynxComment(parsed.data, sub.app_login, true);
+        const secondaries = loadSecondaryTechNames(db, id);
+        const body = formatSplynxComment(parsed.data, sub.app_login, true, secondaries);
         await splynx.updateTaskComment(sub.splynx_comment_id, body);
         pushedToSplynx = true;
       } catch (err) {
@@ -303,6 +304,7 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
       }
 
       try {
+        const secondaries = loadSecondaryTechNames(db, id);
         const result = await pipelineSendDocument({
           config,
           caption: formatWhatsAppCaption(
@@ -315,6 +317,7 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
             // than re-stamping to "now" — otherwise "Submitted at" would
             // misleadingly drift forward each time admin re-fires.
             new Date(sub.created_at),
+            secondaries,
           ),
           pdfBuffer,
           fileName: `task-${sub.task_id}-submission-${sub.id}.pdf`,
@@ -368,7 +371,13 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
         const parsed = ExternalSummarySchema.safeParse(safeParse(summarySource));
         if (!parsed.success) throw new Error("stored summary is malformed");
         const summary = parsed.data;
-        const body = formatSplynxComment(summary, sub.app_login, !!sub.corrected_summary_json);
+        const secondaries = loadSecondaryTechNames(db, id);
+        const body = formatSplynxComment(
+          summary,
+          sub.app_login,
+          !!sub.corrected_summary_json,
+          secondaries,
+        );
         const result = await splynx.addTaskComment(sub.task_id, sub.splynx_admin_id, body, [
           {
             buffer: pdfBuffer,
@@ -802,6 +811,110 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
     return { ok: true };
   });
 
+  // ---------- SECONDARY-TECH ROSTER (helpers without app logins) ----------
+  app.get("/admin/secondary-techs", { preHandler: requireAdmin }, async () => {
+    const rows = db
+      .prepare(
+        `SELECT id, name, is_active, created_at, updated_at
+         FROM secondary_techs
+         ORDER BY is_active DESC, name COLLATE NOCASE ASC`,
+      )
+      .all() as Array<{
+      id: number;
+      name: string;
+      is_active: number;
+      created_at: number;
+      updated_at: number;
+    }>;
+    return {
+      secondary_techs: rows.map((r) => ({
+        id: r.id,
+        name: r.name,
+        is_active: r.is_active === 1,
+        created_at: r.created_at,
+        updated_at: r.updated_at,
+      })),
+    };
+  });
+
+  const SecondaryTechCreateSchema = z.object({
+    name: z.string().trim().min(1).max(120),
+  });
+
+  app.post("/admin/secondary-techs", { preHandler: requireAdmin }, async (req, reply) => {
+    const parsed = SecondaryTechCreateSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "invalid_body", issues: parsed.error.issues });
+    }
+    const now = Date.now();
+    try {
+      const info = db
+        .prepare(
+          `INSERT INTO secondary_techs (name, is_active, created_at, updated_at)
+           VALUES (?, 1, ?, ?)`,
+        )
+        .run(parsed.data.name, now, now);
+      return reply.code(201).send({ id: Number(info.lastInsertRowid) });
+    } catch (err) {
+      const e = err as { code?: string };
+      if (e.code === "SQLITE_CONSTRAINT_UNIQUE") {
+        return reply.code(409).send({ error: "name_taken" });
+      }
+      throw err;
+    }
+  });
+
+  const SecondaryTechPatchSchema = z.object({
+    name: z.string().trim().min(1).max(120).optional(),
+    is_active: z.boolean().optional(),
+  });
+
+  app.patch("/admin/secondary-techs/:id", { preHandler: requireAdmin }, async (req, reply) => {
+    const id = parseId((req.params as { id: string }).id);
+    if (id === null) return reply.code(400).send({ error: "invalid_id" });
+    const parsed = SecondaryTechPatchSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "invalid_body", issues: parsed.error.issues });
+    }
+    const fields: string[] = [];
+    const values: (string | number)[] = [];
+    if (parsed.data.name !== undefined) {
+      fields.push("name = ?");
+      values.push(parsed.data.name);
+    }
+    if (parsed.data.is_active !== undefined) {
+      fields.push("is_active = ?");
+      values.push(parsed.data.is_active ? 1 : 0);
+    }
+    if (fields.length === 0) return { ok: true };
+    fields.push("updated_at = ?");
+    values.push(Date.now());
+    values.push(id);
+    try {
+      db.prepare(
+        `UPDATE secondary_techs SET ${fields.join(", ")} WHERE id = ?`,
+      ).run(...values);
+    } catch (err) {
+      const e = err as { code?: string };
+      if (e.code === "SQLITE_CONSTRAINT_UNIQUE") {
+        return reply.code(409).send({ error: "name_taken" });
+      }
+      throw err;
+    }
+    return { ok: true };
+  });
+
+  app.delete("/admin/secondary-techs/:id", { preHandler: requireAdmin }, async (req, reply) => {
+    const id = parseId((req.params as { id: string }).id);
+    if (id === null) return reply.code(400).send({ error: "invalid_id" });
+    // Soft-delete — historical submission_secondary_techs rows reference
+    // this id, and a hard delete would orphan or vanish them.
+    db.prepare(
+      `UPDATE secondary_techs SET is_active = 0, updated_at = ? WHERE id = ?`,
+    ).run(Date.now(), id);
+    return { ok: true };
+  });
+
   // ---------- RATING (admin-only, internal-only) ----------
   app.get(
     "/admin/submissions/:id/rating",
@@ -932,6 +1045,19 @@ function loadSubmission(db: ReturnType<typeof getDb>, id: number): MinimalSubmis
     )
     .get(id) as MinimalSubmission | undefined;
   return row ?? null;
+}
+
+function loadSecondaryTechNames(db: ReturnType<typeof getDb>, submissionId: number): string[] {
+  return db
+    .prepare(
+      `SELECT st.name
+       FROM submission_secondary_techs sst
+       JOIN secondary_techs st ON st.id = sst.secondary_tech_id
+       WHERE sst.submission_id = ?
+       ORDER BY st.name COLLATE NOCASE ASC`,
+    )
+    .all(submissionId)
+    .map((r) => (r as { name: string }).name);
 }
 
 function recordAdminAction(

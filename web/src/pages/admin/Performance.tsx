@@ -103,7 +103,10 @@ export function Performance() {
       {!data ? (
         <div className="panel muted">Loading…</div>
       ) : sorted.length === 0 ? (
-        <div className="panel muted">No techs have submitted in this period.</div>
+        <>
+          <div className="panel muted">No techs have submitted in this period.</div>
+          <SecondaryTechsPanel period={period} />
+        </>
       ) : (
         <div className="panel">
           <div style={{ overflowX: "auto" }}>
@@ -181,6 +184,93 @@ export function Performance() {
               </tbody>
             </table>
           </div>
+        </div>
+      )}
+
+      {data && sorted.length > 0 && <SecondaryTechsPanel period={period} />}
+    </div>
+  );
+}
+
+interface SecondaryTechRow {
+  id: number;
+  name: string;
+  is_active: boolean;
+  job_count: number;
+  last_submission_at: number | null;
+}
+
+interface SecondaryTechsResponse {
+  period: Period;
+  period_label: string;
+  available_months: string[];
+  techs: SecondaryTechRow[];
+}
+
+function SecondaryTechsPanel({ period }: { period: Period }) {
+  const [data, setData] = useState<SecondaryTechsResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setData(null);
+    setError(null);
+    api
+      .get<SecondaryTechsResponse>(`/admin/performance/secondary-techs?period=${period}`)
+      .then(setData)
+      .catch((e: unknown) => {
+        if (e instanceof ApiError) setError(`Failed to load (${e.status})`);
+        else setError("Network error");
+      });
+  }, [period]);
+
+  return (
+    <div className="panel stack">
+      <div>
+        <h3 style={{ margin: 0 }}>Helpers (secondary techs)</h3>
+        <p className="muted" style={{ margin: "4px 0 0", fontSize: "0.85em" }}>
+          Jobs in this period where a helper was tagged. A single submission can credit
+          more than one helper, so the totals here can exceed the team table's job count.
+        </p>
+      </div>
+      {error ? (
+        <div className="danger">{error}</div>
+      ) : !data ? (
+        <div className="muted">Loading…</div>
+      ) : data.techs.length === 0 ? (
+        <div className="muted">No helpers tagged in this period.</div>
+      ) : (
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.92em" }}>
+            <thead>
+              <tr style={{ textAlign: "left", color: "var(--c-muted)" }}>
+                <th style={th()}>Helper</th>
+                <th style={{ ...th(), textAlign: "right" }}>Jobs</th>
+                <th style={th()}>Last activity</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.techs.map((t) => (
+                <tr key={t.id} style={{ borderTop: "1px solid var(--c-border)" }}>
+                  <td style={td()}>
+                    <strong>{t.name}</strong>
+                    {!t.is_active && (
+                      <span className="muted" style={{ marginLeft: 6, fontSize: "0.85em" }}>
+                        (disabled)
+                      </span>
+                    )}
+                  </td>
+                  <td style={{ ...td(), textAlign: "right" }}>
+                    <strong>{t.job_count}</strong>
+                  </td>
+                  <td style={td()}>
+                    {t.last_submission_at
+                      ? new Date(t.last_submission_at).toLocaleString()
+                      : <span className="muted">—</span>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </div>

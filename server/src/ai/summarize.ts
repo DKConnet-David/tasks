@@ -9,6 +9,7 @@ interface SummarizeArgs {
   comment: string;
   photoBuffers: Buffer[];
   techName: string;
+  secondaryTechNames?: string[];
 }
 
 const SYSTEM_PROMPT = `You are a senior field-tech ops analyst at a small ISP / WISP. Your output drives:
@@ -85,6 +86,9 @@ export async function summarize(args: SummarizeArgs): Promise<ExternalSummary> {
     `Scheduled (NOT the actual start time — do not copy into job_start_time): ${args.task.scheduled_from && args.task.scheduled_from !== "0000-00-00 00:00:00" ? args.task.scheduled_from : "(no date)"}`,
     `Estimated duration in Splynx (NOT the actual duration — do not copy into job_duration): ${args.task.formatted_duration || "(not recorded)"}`,
     `Technician on site: ${args.techName}`,
+    ...((args.secondaryTechNames ?? []).filter((n) => n.trim()).length > 0
+      ? [`Assisted by: ${(args.secondaryTechNames ?? []).map((n) => n.trim()).filter(Boolean).join(", ")}`]
+      : []),
     "",
     `Tech's notes (verbatim): ${args.comment.trim() || "(no notes provided)"}`,
     "",

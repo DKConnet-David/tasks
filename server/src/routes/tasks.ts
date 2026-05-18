@@ -16,6 +16,20 @@ export async function registerTaskRoutes(app: FastifyInstance, config: AppConfig
   const { requireSession } = makeAuthGuards(config);
   const db = getDb(config.DATA_DIR);
 
+  // Active secondary-tech roster — used by the tech-side picker on the
+  // Update task page. Excludes disabled entries so they stop appearing in
+  // the UI once the admin retires them.
+  app.get("/secondary-techs", { preHandler: requireSession }, async () => {
+    const rows = db
+      .prepare(
+        `SELECT id, name FROM secondary_techs
+         WHERE is_active = 1
+         ORDER BY name COLLATE NOCASE ASC`,
+      )
+      .all() as { id: number; name: string }[];
+    return { secondary_techs: rows };
+  });
+
   // Fetch a Splynx task by id, plus its existing comments.
   app.get("/tasks/:id", { preHandler: requireSession }, async (req, reply) => {
     const { id: idParam } = req.params as { id: string };
@@ -64,11 +78,14 @@ export async function registerTaskRoutes(app: FastifyInstance, config: AppConfig
     }
 
     let comment = "";
+    let secondaryTechIdsRaw = "";
     const photos: SourcePhoto[] = [];
     try {
       for await (const part of req.parts()) {
         if (part.type === "field" && part.fieldname === "comment") {
           comment = String(part.value).slice(0, COMMENT_MAX);
+        } else if (part.type === "field" && part.fieldname === "secondary_tech_ids") {
+          secondaryTechIdsRaw = String(part.value);
         } else if (part.type === "file" && part.fieldname === "photos") {
           if (!part.mimetype.startsWith("image/")) {
             // Drain the stream so the parser doesn't hang on the unread file.
@@ -104,6 +121,25 @@ export async function registerTaskRoutes(app: FastifyInstance, config: AppConfig
       ) VALUES (?, ?, ?, 'tech', ?, 'pending', ?, ?)
     `).run(taskId, session.app_login, session.splynx_admin_id, comment, now, now);
     const submissionId = Number(insert.lastInsertRowid);
+
+    // Persist secondary-tech tags. CSV is parsed defensively — any token
+    // that isn't a positive integer is dropped silently. The INSERT itself
+    // ignores ids that don't reference an active row, so a stale id from a
+    // cached UI can't poison the join table.
+    const secondaryTechIds = secondaryTechIdsRaw
+      .split(",")
+      .map((s) => Number.parseInt(s.trim(), 10))
+      .filter((n) => Number.isFinite(n) && n > 0);
+    if (secondaryTechIds.length > 0) {
+      const insertTag = db.prepare(
+        `INSERT OR IGNORE INTO submission_secondary_techs (submission_id, secondary_tech_id)
+         SELECT ?, id FROM secondary_techs WHERE id = ? AND is_active = 1`,
+      );
+      const tx = db.transaction((ids: number[]) => {
+        for (const id of ids) insertTag.run(submissionId, id);
+      });
+      tx(secondaryTechIds);
+    }
 
     // Process and save each photo.
     let savedCount = 0;

@@ -67,6 +67,21 @@ export async function runSubmissionPipeline(args: PipelineArgs): Promise<Pipelin
   let whatsappMessageId: string | null = null;
   const splynxAttachmentIds: number[] = [];
 
+  // Load any secondary-tech names attached to this submission. The
+  // submit handler has already validated that each id is active before
+  // inserting into the join table, so a non-empty result here is safe to
+  // forward into every downstream output (AI prompt, formatters, PDF).
+  const secondaryTechNames = db
+    .prepare(
+      `SELECT st.name
+       FROM submission_secondary_techs sst
+       JOIN secondary_techs st ON st.id = sst.secondary_tech_id
+       WHERE sst.submission_id = ?
+       ORDER BY st.name COLLATE NOCASE ASC`,
+    )
+    .all(submissionId)
+    .map((r) => (r as { name: string }).name);
+
   // Load processed photo bytes from the local archive (Phase B saved them).
   const photoData = await Promise.all(
     photos.map(async (p) => ({
@@ -89,6 +104,7 @@ export async function runSubmissionPipeline(args: PipelineArgs): Promise<Pipelin
       comment,
       photoBuffers: photoData.map((p) => p.buffer),
       techName: appLogin,
+      secondaryTechNames,
     }),
     ratePerformance({
       config,
@@ -147,6 +163,7 @@ export async function runSubmissionPipeline(args: PipelineArgs): Promise<Pipelin
       photos: photoData.map(({ buffer, width, height }) => ({ buffer, width, height })),
       techName: appLogin,
       submittedAt: new Date(),
+      secondaryTechNames,
     });
     const pdfDir = path.join(config.DATA_DIR, "photos", String(taskId), String(submissionId));
     await fs.mkdir(pdfDir, { recursive: true });
@@ -164,7 +181,7 @@ export async function runSubmissionPipeline(args: PipelineArgs): Promise<Pipelin
   if (pdfBuffer) {
     try {
       const splynx = getServiceSplynxClient(config);
-      const commentBody = formatSplynxComment(summary, appLogin, false);
+      const commentBody = formatSplynxComment(summary, appLogin, false, secondaryTechNames);
       const pdfFilename = `task-${taskId}-submission-${submissionId}.pdf`;
       const result = await splynx.addTaskComment(taskId, splynxAdminId, commentBody, [
         { buffer: pdfBuffer, filename: pdfFilename, mimetype: "application/pdf" },
@@ -221,6 +238,7 @@ export async function runSubmissionPipeline(args: PipelineArgs): Promise<Pipelin
         // so "now" tracks submission.created_at within ~1s — close enough
         // for an HH:MM display.
         new Date(),
+        secondaryTechNames,
       );
       const fileName = `task-${taskId}-submission-${submissionId}.pdf`;
       const result = await pipelineSendDocument({

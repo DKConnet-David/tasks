@@ -146,6 +146,30 @@ function migrate(d: Database.Database): void {
     -- WhatsApp / Splynx — see the leak-test for the runtime guarantee.
     -- UNIQUE(app_login, period_start) means re-running the analysis for
     -- the same calendar month upserts cleanly.
+    -- Secondary technicians ("helpers") — a roster of people the primary
+    -- tech can tag on a submission. They have no app login of their own;
+    -- the admin maintains this list manually. Names are stored case-
+    -- insensitively unique so "Edward" and "edward" don't both exist.
+    CREATE TABLE IF NOT EXISTS secondary_techs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+      is_active INTEGER NOT NULL DEFAULT 1,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+
+    -- Many-to-many join: which secondary techs were tagged on which
+    -- submission. ON DELETE CASCADE so deleting a submission cleans up
+    -- its tags; soft-deleting a secondary tech keeps the historical tags
+    -- intact (we set is_active=0 rather than DELETE the row).
+    CREATE TABLE IF NOT EXISTS submission_secondary_techs (
+      submission_id INTEGER NOT NULL REFERENCES submissions(id) ON DELETE CASCADE,
+      secondary_tech_id INTEGER NOT NULL REFERENCES secondary_techs(id) ON DELETE CASCADE,
+      PRIMARY KEY (submission_id, secondary_tech_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_subm_sec_techs_secondary
+      ON submission_secondary_techs(secondary_tech_id);
+
     CREATE TABLE IF NOT EXISTS tech_patterns (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       app_login TEXT NOT NULL,
