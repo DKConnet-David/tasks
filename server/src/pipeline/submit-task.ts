@@ -6,6 +6,7 @@ import type { AppConfig } from "../config.js";
 import type { SplynxTaskRaw } from "../splynx/types.js";
 import { getServiceSplynxClient } from "../splynx/service-client.js";
 import { summarize } from "../ai/summarize.js";
+import { getSetting, SettingKeys } from "../lib/settings.js";
 import { ratePerformance } from "../ai/rate.js";
 import { generatePdf } from "../pdf/generate.js";
 import { pipelineSendDocument } from "../routes/whatsapp.js";
@@ -97,6 +98,8 @@ export async function runSubmissionPipeline(args: PipelineArgs): Promise<Pipelin
   // Rating is admin-only and never leaves the system. Running in parallel
   // means the user-facing latency tracks summary alone, not summary+rating.
   log.info({ submissionId, photoCount: photoData.length }, "calling Claude (summarize + rate)");
+  const requirementsCheckEnabled =
+    getSetting(db, SettingKeys.requirementsCheckEnabled) === "1";
   const [summaryResult, ratingResult] = await Promise.allSettled([
     summarize({
       config,
@@ -105,6 +108,7 @@ export async function runSubmissionPipeline(args: PipelineArgs): Promise<Pipelin
       photoBuffers: photoData.map((p) => p.buffer),
       techName: appLogin,
       secondaryTechNames,
+      requirementsCheckEnabled,
     }),
     ratePerformance({
       config,
@@ -133,12 +137,25 @@ export async function runSubmissionPipeline(args: PipelineArgs): Promise<Pipelin
       errors,
     };
   }
-  summary = summaryResult.value;
+  summary = summaryResult.value.summary;
+  const requirementsCheck = summaryResult.value.requirementsCheck;
   db.prepare(`UPDATE submissions SET summary_json = ?, updated_at = ? WHERE id = ?`).run(
     JSON.stringify(summary),
     Date.now(),
     submissionId,
   );
+  if (requirementsCheck) {
+    // Persist admin-only requirements-coverage data. Stored as JSON in
+    // its own column so the formatters (which only read summary_json)
+    // can never accidentally pull it into external output.
+    db.prepare(
+      `UPDATE submissions SET requirements_check_json = ?, updated_at = ? WHERE id = ?`,
+    ).run(JSON.stringify(requirementsCheck), Date.now(), submissionId);
+    log.info(
+      { submissionId, items: requirementsCheck.items.length },
+      "requirements check saved",
+    );
+  }
   log.info({ submissionId, headline: summary.headline }, "summary saved");
 
   // Rating: failure is non-fatal — we still want the submission to land

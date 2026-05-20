@@ -12,6 +12,7 @@ import { WhatsAppPanel } from "./pages/admin/WhatsAppPanel";
 import { TechsPage } from "./pages/admin/TechsPage";
 import { SecondaryTechsPage } from "./pages/admin/SecondaryTechsPage";
 import { AdminsPage } from "./pages/admin/AdminsPage";
+import { Settings } from "./pages/admin/Settings";
 import { Performance } from "./pages/admin/Performance";
 import { TechProfile } from "./pages/admin/TechProfile";
 
@@ -33,6 +34,7 @@ export function App() {
           <Route path="techs" element={<TechsPage />} />
           <Route path="secondary-techs" element={<SecondaryTechsPage />} />
           <Route path="admins" element={<AdminsPage />} />
+          <Route path="settings" element={<Settings />} />
           <Route path="performance" element={<Performance />} />
           <Route path="performance/:login" element={<TechProfile />} />
         </Route>

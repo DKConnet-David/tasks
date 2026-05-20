@@ -1370,6 +1370,7 @@ const JOB_TYPE_LABELS: Record<string, string> = {
   antenna_move: "Antenna Move",
   offline_connection: "Offline Connection",
   internal_issues_callout: "Internal Issues Call-Out",
+  voip_installation: "VoIP Installation",
   complaint: "Complaint",
   other: "Other",
 };

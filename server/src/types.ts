@@ -64,11 +64,38 @@ export const JobTypeSchema = z
     "antenna_move",
     "offline_connection",
     "internal_issues_callout",
+    "voip_installation",
     "complaint",
     "other",
   ])
   .default("other");
 export type JobType = z.infer<typeof JobTypeSchema>;
+
+/**
+ * Per-requirement verdict from the AI requirements-coverage check.
+ *
+ * Admin-only data: the result blob lives in submissions.requirements_check_json
+ * and surfaces in the admin SubmissionDetail UI only. It is intentionally
+ * NOT a field on ExternalSummary so the type firewall keeps formatters
+ * (which only accept ExternalSummary) from rendering it. The leak-test
+ * doesn't need new fixtures because the data never reaches a formatter.
+ *
+ * `status` is a 3-state to encourage `unclear` over a confident wrong
+ * `missing` during the calibration phase — see the prompt block in
+ * summarize.ts.
+ */
+export const RequirementsItemSchema = z.object({
+  requirement: z.string().min(1),
+  status: z.enum(["found", "missing", "unclear"]),
+  evidence: z.string().default(""),
+});
+export type RequirementsItem = z.infer<typeof RequirementsItemSchema>;
+
+export const RequirementsCheckSchema = z.object({
+  job_type: JobTypeSchema,
+  items: z.array(RequirementsItemSchema),
+});
+export type RequirementsCheck = z.infer<typeof RequirementsCheckSchema>;
 
 export const ExternalSummarySchema = z.object({
   // Short-form fields — used in the WhatsApp caption and Splynx comment

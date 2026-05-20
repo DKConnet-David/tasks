@@ -211,6 +211,16 @@ function migrate(d: Database.Database): void {
     d.exec(`ALTER TABLE submissions ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0`);
     d.exec(`CREATE INDEX IF NOT EXISTS idx_submissions_visible ON submissions(hidden, created_at DESC)`);
   }
+
+  // 2026-05-19: per-job-type AI requirements-coverage check. JSON blob
+  // holds an array of {requirement, status, evidence} items as scored
+  // by the summariser when the `requirements_check_enabled` setting is
+  // on. NULL when the setting was off at submit time, or for legacy
+  // submissions. Admin-only data; never reaches WhatsApp / Splynx /
+  // PDF — the formatters don't read this column.
+  if (!subCols.has("requirements_check_json")) {
+    d.exec(`ALTER TABLE submissions ADD COLUMN requirements_check_json TEXT`);
+  }
   const sesCols = cols("sessions");
   if (sesCols.has("splynx_user_id") && !sesCols.has("splynx_admin_id")) {
     d.exec(`ALTER TABLE sessions RENAME COLUMN splynx_user_id TO splynx_admin_id`);

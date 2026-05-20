@@ -6,13 +6,19 @@ import { makeAuthGuards } from "../lib/auth-guards.js";
 import { getServiceSplynxClient, isSplynxConfigured } from "../splynx/service-client.js";
 import { getDb } from "../db.js";
 import type { AppConfig } from "../config.js";
-import { ExternalSummarySchema, JobTypeSchema, RatingDimensionsSchema } from "../types.js";
+import {
+  ExternalSummarySchema,
+  JobTypeSchema,
+  RatingDimensionsSchema,
+  RequirementsCheckSchema,
+} from "../types.js";
 import { summarize } from "../ai/summarize.js";
 import { pipelineSendDocument } from "./whatsapp.js";
 import { photoPath, processAndSavePhoto, type SourcePhoto } from "../photos/store.js";
 import { runSubmissionPipeline } from "../pipeline/submit-task.js";
 import { formatSplynxComment, formatWhatsAppCaption, splynxTaskUrl } from "../format/external.js";
 import { createTech, listTechs, updateTech } from "../lib/techs.js";
+import { getSetting, setSetting, SettingKeys } from "../lib/settings.js";
 import {
   countActiveAdmins,
   createAdmin,
@@ -130,6 +136,7 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
         `SELECT id, task_id, app_login, splynx_admin_id, source, comment, tech_comment_override,
                 summary_json, corrected_summary_json, splynx_comment_id, splynx_corrected_comment_id,
                 splynx_pdf_file_id, wa_message_id, status, error, admin_resolved, hidden,
+                requirements_check_json,
                 created_at, updated_at
          FROM submissions WHERE id = ?`,
       )
@@ -152,11 +159,22 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
           error: string | null;
           admin_resolved: number;
           hidden: number;
+          requirements_check_json: string | null;
           created_at: number;
           updated_at: number;
         }
       | undefined;
     if (!sub) return reply.code(404).send({ error: "not_found" });
+
+    // Parse the admin-only requirements-coverage blob. Swallow malformed
+    // rows (returning null) so a future schema drift doesn't break the
+    // whole submission detail page — the panel just won't render.
+    let requirementsCheck: unknown = null;
+    if (sub.requirements_check_json) {
+      const raw = safeParse(sub.requirements_check_json);
+      const parsed = RequirementsCheckSchema.safeParse(raw);
+      if (parsed.success) requirementsCheck = parsed.data;
+    }
 
     const photos = db
       .prepare(
@@ -199,6 +217,9 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
       splynx_task_url: config.SPLYNX_BASE_URL
         ? splynxTaskUrl(config.SPLYNX_BASE_URL, sub.task_id)
         : "",
+      // Admin-only requirements-coverage check (null when the toggle was
+      // off at submit time, or when there's no checklist for this job_type).
+      requirements_check: requirementsCheck,
     };
   });
 
@@ -425,15 +446,23 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
         );
         const splynx = getServiceSplynxClient(config);
         const task = await splynx.getTaskRaw(sub.task_id);
-        const summary = await summarize({
+        // Regenerate is a preview-only path — we don't persist the
+        // requirements-check result here even if the toggle is on; the
+        // admin saves the summary via PATCH afterward. Pulling the
+        // setting in still lets the AI surface coverage gaps in the
+        // preview UI if the operator wants to see them.
+        const result = await summarize({
           config,
           task,
           comment: sub.tech_comment_override ?? sub.comment ?? "",
           photoBuffers,
           techName: sub.app_login,
+          requirementsCheckEnabled:
+            getSetting(db, SettingKeys.requirementsCheckEnabled) === "1",
         });
+        const summary = result.summary;
         recordAdminAction(db, id, req.session?.app_login ?? null, "regenerate_summary", { headline: summary.headline });
-        return { ok: true, summary };
+        return { ok: true, summary, requirements_check: result.requirementsCheck };
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         recordAdminAction(db, id, req.session?.app_login ?? null, "regenerate_summary", { error: msg });
@@ -810,6 +839,39 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
     await updateAdmin(db, id, { is_active: false });
     return { ok: true };
   });
+
+  // ---------- PIPELINE SETTINGS (admin-only toggles) ----------
+  // The requirements-coverage check is currently the only toggleable
+  // pipeline behavior. Default is off; flipping on costs a few hundred
+  // extra tokens per submission and surfaces a flagged checklist in
+  // the admin SubmissionDetail UI only — never in external output.
+  app.get(
+    "/admin/settings/requirements-check",
+    { preHandler: requireAdmin },
+    async () => {
+      return {
+        enabled: getSetting(db, SettingKeys.requirementsCheckEnabled) === "1",
+      };
+    },
+  );
+
+  const RequirementsCheckSettingSchema = z.object({ enabled: z.boolean() });
+  app.patch(
+    "/admin/settings/requirements-check",
+    { preHandler: requireAdmin },
+    async (req, reply) => {
+      const parsed = RequirementsCheckSettingSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return reply.code(400).send({ error: "invalid_body", issues: parsed.error.issues });
+      }
+      setSetting(db, SettingKeys.requirementsCheckEnabled, parsed.data.enabled ? "1" : "0");
+      req.log.info(
+        { actor: req.session?.app_login ?? null, enabled: parsed.data.enabled },
+        "requirements_check_enabled toggled",
+      );
+      return { ok: true, enabled: parsed.data.enabled };
+    },
+  );
 
   // ---------- SECONDARY-TECH ROSTER (helpers without app logins) ----------
   app.get("/admin/secondary-techs", { preHandler: requireAdmin }, async () => {

@@ -22,4 +22,10 @@ export function deleteSetting(db: Database.Database, key: string): void {
 export const SettingKeys = {
   whatsappGroupJid: "whatsapp_group_jid",
   whatsappGroupName: "whatsapp_group_name",
+  // "1" → AI evaluates the per-job-type requirements checklist on
+  // every submission; result lives in submissions.requirements_check_json
+  // and surfaces in the admin SubmissionDetail UI only. Anything else
+  // (including absent) is treated as off. Default off so the extra
+  // tokens-per-submission cost only kicks in when the operator opts in.
+  requirementsCheckEnabled: "requirements_check_enabled",
 } as const;

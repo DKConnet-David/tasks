@@ -16,6 +16,7 @@ export function AdminLayout() {
             <NavLink to="/admin/secondary-techs">Helpers</NavLink>
             <NavLink to="/admin/admins">Admins</NavLink>
             <NavLink to="/admin/whatsapp">WhatsApp</NavLink>
+            <NavLink to="/admin/settings">Settings</NavLink>
           </nav>
         </div>
         <div className="row" style={{ gap: "0.5rem" }}>

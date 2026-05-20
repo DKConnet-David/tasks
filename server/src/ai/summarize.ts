@@ -1,7 +1,13 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { AppConfig } from "../config.js";
-import { ExternalSummarySchema, type ExternalSummary } from "../types.js";
+import {
+  ExternalSummarySchema,
+  RequirementsCheckSchema,
+  type ExternalSummary,
+  type RequirementsCheck,
+} from "../types.js";
 import type { SplynxTaskRaw } from "../splynx/types.js";
+import { JOB_TYPE_REQUIREMENTS } from "../jobtypes/requirements.js";
 
 interface SummarizeArgs {
   config: AppConfig;
@@ -10,6 +16,18 @@ interface SummarizeArgs {
   photoBuffers: Buffer[];
   techName: string;
   secondaryTechNames?: string[];
+  /**
+   * When true, the AI also produces a requirements-coverage check
+   * against the per-job-type checklist. Result is returned alongside
+   * the summary; never reaches WhatsApp / Splynx / PDF. Default false
+   * so the extra tokens are only spent when the operator opts in.
+   */
+  requirementsCheckEnabled?: boolean;
+}
+
+export interface SummarizeResult {
+  summary: ExternalSummary;
+  requirementsCheck: RequirementsCheck | null;
 }
 
 const SYSTEM_PROMPT = `You are a senior field-tech ops analyst at a small ISP / WISP. Your output drives:
@@ -53,6 +71,7 @@ STRUCTURED (drive the PDF report):
   - "antenna_move"             relocating or re-aiming an existing client antenna / radio (the "connection move" scenario — same client, different aim or mounting point)
   - "offline_connection"       reactive visit specifically because the client is fully offline — link is down, dead radio, no link light
   - "internal_issues_callout"  reactive visit for issues *while online* — poor wifi coverage inside the premises, intermittent drops, slow speeds, single-room dead spots
+  - "voip_installation"        installing a VoIP phone (cabled or wifi) — capturing phone make/model/IP/MAC, placement, and call-test proof
   - "complaint"                visit driven by a client complaint that doesn't cleanly fit the technical buckets above — billing dispute on site, equipment damage claim, attitude/quality complaint follow-up
   - "other"                    genuinely doesn't fit any of the above
 
@@ -62,8 +81,68 @@ CRITICAL: photo_descriptions MUST contain exactly the same number of entries as 
 
 Reason from the photos and the tech's notes; the Splynx task description is supplementary context (it describes what was scheduled, not necessarily what happened).`;
 
-export async function summarize(args: SummarizeArgs): Promise<ExternalSummary> {
+/**
+ * Additional system-prompt block appended only when the operator has
+ * enabled the requirements-coverage check. Lists every per-job-type
+ * checklist so the model has the full lookup table after classifying
+ * job_type.
+ */
+function buildRequirementsPromptBlock(): string {
+  const blocks: string[] = [];
+  blocks.push(
+    "REQUIREMENTS COVERAGE CHECK (admin-only — these verdicts are NOT shown to the customer).",
+    "After classifying job_type, look up the matching checklist below and evaluate each requirement against the photos + tech notes.",
+    "For each item, populate requirements_check.items with:",
+    '  - status: "found" only when the photo or note clearly satisfies the requirement;',
+    '            "missing" only when there is a confident gap;',
+    '            "unclear" when you cannot tell with confidence.',
+    "  - evidence: a single short sentence referencing the photo number or the phrase from the tech's notes you based your verdict on.",
+    "Bias toward `unclear` over a confident `missing` while we calibrate.",
+    "Always set requirements_check.job_type to the same value you produced for the top-level job_type field.",
+    "If the classified job_type has an EMPTY checklist below (i.e. complaint, other, or any future type with no fixed deliverables), return an empty items array — do not invent requirements.",
+    "",
+    "Checklists by job_type:",
+  );
+  for (const [jobType, items] of Object.entries(JOB_TYPE_REQUIREMENTS)) {
+    if (items.length === 0) {
+      blocks.push(`- ${jobType}: (no fixed checklist — return empty items array)`);
+    } else {
+      blocks.push(`- ${jobType}:`);
+      for (const item of items) blocks.push(`    • ${item}`);
+    }
+  }
+  return blocks.join("\n");
+}
+
+// Tool-schema fragment for the requirements_check field. Always present
+// in the schema (Anthropic tools don't support conditional schemas) but
+// only added to the `required` list when the toggle is on. When the
+// toggle is off the model is instructed to omit it; if it sends it
+// anyway we just don't parse it.
+const REQUIREMENTS_CHECK_TOOL_SCHEMA = {
+  type: "object" as const,
+  properties: {
+    job_type: { type: "string" as const },
+    items: {
+      type: "array" as const,
+      items: {
+        type: "object" as const,
+        properties: {
+          requirement: { type: "string" as const },
+          status: { type: "string" as const, enum: ["found", "missing", "unclear"] },
+          evidence: { type: "string" as const },
+        },
+        required: ["requirement", "status", "evidence"],
+      },
+    },
+  },
+  required: ["job_type", "items"],
+};
+
+
+export async function summarize(args: SummarizeArgs): Promise<SummarizeResult> {
   const client = new Anthropic({ apiKey: args.config.ANTHROPIC_API_KEY });
+  const reqCheckOn = args.requirementsCheckEnabled === true;
 
   const photoBlocks = args.photoBuffers.map(
     (buf) =>
@@ -104,97 +183,114 @@ export async function summarize(args: SummarizeArgs): Promise<ExternalSummary> {
 
   // 30 photos × ~80 tokens of description each + the rest of the structured
   // fields can run past 3k easily. 8192 is plenty without being wasteful.
+  // When the requirements check is on we tack the checklist block onto the
+  // system prompt and add `requirements_check` to the tool input_schema so
+  // the model fills it in the same tool_use response.
+  const systemPrompt = reqCheckOn
+    ? `${SYSTEM_PROMPT}\n\n${buildRequirementsPromptBlock()}`
+    : SYSTEM_PROMPT;
+  const baseProperties = {
+    headline: { type: "string" as const },
+    what_was_done: { type: "string" as const },
+    observations: { type: "string" as const },
+    follow_ups: { type: "string" as const },
+    overview: {
+      type: "object" as const,
+      properties: {
+        service_type: { type: "string" as const },
+        client_name: { type: "string" as const },
+        location: { type: "string" as const },
+        job_date: { type: "string" as const },
+        job_start_time: { type: "string" as const },
+        job_end_time: { type: "string" as const },
+        job_duration: { type: "string" as const },
+      },
+      required: [
+        "service_type",
+        "client_name",
+        "location",
+        "job_date",
+        "job_start_time",
+        "job_end_time",
+        "job_duration",
+      ],
+    },
+    work_completed: { type: "array" as const, items: { type: "string" as const } },
+    photo_descriptions: { type: "array" as const, items: { type: "string" as const } },
+    materials: { type: "array" as const, items: { type: "string" as const } },
+    issues_notes: { type: "array" as const, items: { type: "string" as const } },
+    job_type: {
+      type: "string" as const,
+      enum: [
+        "ftua_installation",
+        "site_survey",
+        "fibre_los_inspection",
+        "layer2_fibre_setup",
+        "extender_installation",
+        "antenna_move",
+        "offline_connection",
+        "internal_issues_callout",
+        "voip_installation",
+        "complaint",
+        "other",
+      ],
+    },
+    job_card: {
+      type: "object" as const,
+      properties: {
+        job_card_found: { type: "boolean" as const },
+        customer_signature_present: { type: "boolean" as const },
+        workmanship_satisfaction: {
+          type: "string" as const,
+          enum: ["Y", "N", "unknown"],
+        },
+        work_satisfaction: {
+          type: "string" as const,
+          enum: ["Y", "N", "unknown"],
+        },
+      },
+      required: [
+        "job_card_found",
+        "customer_signature_present",
+        "workmanship_satisfaction",
+        "work_satisfaction",
+      ],
+    },
+  };
+  const baseRequired = [
+    "headline",
+    "what_was_done",
+    "observations",
+    "follow_ups",
+    "overview",
+    "work_completed",
+    "photo_descriptions",
+    "materials",
+    "issues_notes",
+    "job_type",
+    "job_card",
+  ];
+  const toolInputSchema = reqCheckOn
+    ? {
+        type: "object" as const,
+        properties: { ...baseProperties, requirements_check: REQUIREMENTS_CHECK_TOOL_SCHEMA },
+        required: [...baseRequired, "requirements_check"],
+      }
+    : {
+        type: "object" as const,
+        properties: baseProperties,
+        required: baseRequired,
+      };
+
   const response = await client.messages.create({
     model: args.config.CLAUDE_MODEL,
     max_tokens: 8192,
-    system: SYSTEM_PROMPT,
+    system: systemPrompt,
     tools: [
       {
         name: "save_summary",
         description: "Save the structured job summary.",
-        input_schema: {
-          type: "object",
-          properties: {
-            headline: { type: "string" },
-            what_was_done: { type: "string" },
-            observations: { type: "string" },
-            follow_ups: { type: "string" },
-            overview: {
-              type: "object",
-              properties: {
-                service_type: { type: "string" },
-                client_name: { type: "string" },
-                location: { type: "string" },
-                job_date: { type: "string" },
-                job_start_time: { type: "string" },
-                job_end_time: { type: "string" },
-                job_duration: { type: "string" },
-              },
-              required: [
-                "service_type",
-                "client_name",
-                "location",
-                "job_date",
-                "job_start_time",
-                "job_end_time",
-                "job_duration",
-              ],
-            },
-            work_completed: { type: "array", items: { type: "string" } },
-            photo_descriptions: { type: "array", items: { type: "string" } },
-            materials: { type: "array", items: { type: "string" } },
-            issues_notes: { type: "array", items: { type: "string" } },
-            job_type: {
-              type: "string",
-              enum: [
-                "ftua_installation",
-                "site_survey",
-                "fibre_los_inspection",
-                "layer2_fibre_setup",
-                "extender_installation",
-                "antenna_move",
-                "offline_connection",
-                "internal_issues_callout",
-                "complaint",
-                "other",
-              ],
-            },
-            job_card: {
-              type: "object",
-              properties: {
-                job_card_found: { type: "boolean" },
-                customer_signature_present: { type: "boolean" },
-                workmanship_satisfaction: {
-                  type: "string",
-                  enum: ["Y", "N", "unknown"],
-                },
-                work_satisfaction: {
-                  type: "string",
-                  enum: ["Y", "N", "unknown"],
-                },
-              },
-              required: [
-                "job_card_found",
-                "customer_signature_present",
-                "workmanship_satisfaction",
-                "work_satisfaction",
-              ],
-            },
-          },
-          required: [
-            "headline",
-            "what_was_done",
-            "observations",
-            "follow_ups",
-            "overview",
-            "work_completed",
-            "photo_descriptions",
-            "materials",
-            "issues_notes",
-            "job_type",
-            "job_card",
-          ],
-        },
+        input_schema: toolInputSchema,
       },
     ],
     tool_choice: { type: "tool", name: "save_summary" },
@@ -236,7 +332,24 @@ export async function summarize(args: SummarizeArgs): Promise<ExternalSummary> {
   // any drift or future regressions. See docs/plan for context.
   scrubFabricatedTimes(parsed.overview, args.task);
 
-  return parsed;
+  // When the toggle is on, parse the requirements_check sibling. If the
+  // model omitted it or it fails schema we just store null and log — we
+  // never want a malformed requirements check to fail the whole summary.
+  let requirementsCheck: RequirementsCheck | null = null;
+  if (reqCheckOn) {
+    const rawInput = toolUse.input as Record<string, unknown>;
+    const reqParse = RequirementsCheckSchema.safeParse(rawInput.requirements_check);
+    if (reqParse.success) {
+      requirementsCheck = reqParse.data;
+    } else {
+      console.warn(
+        `[summarize] requirements_check parse failed for task ${args.task.id}:`,
+        reqParse.error.issues,
+      );
+    }
+  }
+
+  return { summary: parsed, requirementsCheck };
 }
 
 function scrubFabricatedTimes(

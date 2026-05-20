@@ -32,6 +32,7 @@ const JOB_TYPES = [
   { value: "antenna_move", label: "Antenna Move" },
   { value: "offline_connection", label: "Offline Connection" },
   { value: "internal_issues_callout", label: "Internal Issues Call-Out" },
+  { value: "voip_installation", label: "VoIP Installation" },
   { value: "complaint", label: "Complaint" },
   { value: "other", label: "Other" },
 ] as const;
@@ -53,6 +54,17 @@ interface Action {
   created_at: number;
 }
 
+interface RequirementsItem {
+  requirement: string;
+  status: "found" | "missing" | "unclear";
+  evidence: string;
+}
+
+interface RequirementsCheckResponse {
+  job_type: string;
+  items: RequirementsItem[];
+}
+
 interface DetailResponse {
   submission: Submission;
   photos: Photo[];
@@ -60,6 +72,10 @@ interface DetailResponse {
   // Pre-built Splynx URL for the underlying task. Empty when Splynx
   // isn't configured.
   splynx_task_url: string;
+  // Admin-only requirements-coverage check. Null when the toggle was off
+  // at submit time, when there's no checklist for the job type, or on
+  // legacy submissions.
+  requirements_check: RequirementsCheckResponse | null;
 }
 
 interface Summary {
@@ -310,7 +326,7 @@ export function SubmissionDetail() {
   if (error && !data) return <div className="panel danger">{error}</div>;
   if (!data) return <div className="panel muted">Loading…</div>;
 
-  const { submission, photos, actions, splynx_task_url } = data;
+  const { submission, photos, actions, splynx_task_url, requirements_check } = data;
   const summary = currentSummary(submission);
 
   return (
@@ -371,6 +387,8 @@ export function SubmissionDetail() {
       </div>
 
       <FlagsPanel jobCard={summary?.job_card} />
+
+      <RequirementsCoveragePanel check={requirements_check} />
 
       {okMessage && <div className="panel success">{okMessage}</div>}
       {error && <div className="panel danger">{error}</div>}
@@ -860,6 +878,93 @@ function FlagsPanel({
       </ul>
     </div>
   );
+}
+
+/**
+ * AI-graded coverage of the per-job-type photo / data checklist
+ * (server/src/jobtypes/requirements.ts). Admin-only: never appears in
+ * WhatsApp / Splynx / PDF. Renders nothing when no check was run
+ * (toggle was off or the job_type has no checklist).
+ */
+function RequirementsCoveragePanel({
+  check,
+}: {
+  check: RequirementsCheckResponse | null;
+}) {
+  if (!check || check.items.length === 0) return null;
+  const found = check.items.filter((i) => i.status === "found").length;
+  const missing = check.items.filter((i) => i.status === "missing").length;
+  const unclear = check.items.filter((i) => i.status === "unclear").length;
+  return (
+    <div className="panel stack">
+      <div className="row" style={{ justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+        <div>
+          <div className="row" style={{ alignItems: "center", gap: 8 }}>
+            <h3 style={{ margin: 0 }}>Requirements coverage</h3>
+            <span className="badge warn" title="Visible to admins only — never sent to clients">
+              admin only
+            </span>
+          </div>
+          <div className="muted" style={{ fontSize: "0.85em", marginTop: 4 }}>
+            {found} of {check.items.length} checklist items found
+            {missing > 0 && <> · {missing} missing</>}
+            {unclear > 0 && <> · {unclear} unclear</>}
+          </div>
+        </div>
+      </div>
+      <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+        {check.items.map((item, i) => (
+          <li
+            key={i}
+            style={{
+              display: "flex",
+              gap: 10,
+              padding: "8px 0",
+              borderTop: i === 0 ? "none" : "1px solid var(--c-border)",
+              alignItems: "flex-start",
+            }}
+          >
+            <span
+              style={{
+                flexShrink: 0,
+                fontSize: "1em",
+                fontWeight: 700,
+                color: statusColor(item.status),
+                width: 20,
+                textAlign: "center",
+              }}
+              aria-label={item.status}
+            >
+              {statusIcon(item.status)}
+            </span>
+            <div style={{ flex: 1 }}>
+              <div style={{ lineHeight: 1.35 }}>{item.requirement}</div>
+              {item.evidence && (
+                <div
+                  className="muted"
+                  style={{ fontSize: "0.85em", marginTop: 2, fontStyle: "italic" }}
+                >
+                  {item.evidence}
+                </div>
+              )}
+            </div>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function statusIcon(s: RequirementsItem["status"]): string {
+  if (s === "found") return "✓";
+  if (s === "missing") return "✗";
+  return "?";
+}
+
+function statusColor(s: RequirementsItem["status"]): string {
+  if (s === "found") return "var(--c-success)";
+  if (s === "missing") return "var(--c-danger)";
+  return "var(--c-warn)";
 }
 
 function BulletColumn({
