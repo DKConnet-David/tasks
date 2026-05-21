@@ -207,7 +207,13 @@ export async function runSubmissionPipeline(args: PipelineArgs): Promise<Pipelin
   if (pdfBuffer) {
     try {
       const splynx = getServiceSplynxClient(config);
-      const commentBody = formatSplynxComment(summary, appLogin, false, secondaryTechNames);
+      const commentBody = formatSplynxComment(
+        summary,
+        appLogin,
+        false,
+        secondaryTechNames,
+        stockNotes,
+      );
       const pdfFilename = `task-${taskId}-submission-${submissionId}.pdf`;
       const result = await splynx.addTaskComment(taskId, splynxAdminId, commentBody, [
         { buffer: pdfBuffer, filename: pdfFilename, mimetype: "application/pdf" },

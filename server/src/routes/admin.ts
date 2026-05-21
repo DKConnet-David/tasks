@@ -243,7 +243,14 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
       try {
         const splynx = getServiceSplynxClient(config);
         const secondaries = loadSecondaryTechNames(db, id);
-        const body = formatSplynxComment(parsed.data, sub.app_login, true, secondaries);
+        const stockNotes = loadStockNotes(db, id);
+        const body = formatSplynxComment(
+          parsed.data,
+          sub.app_login,
+          true,
+          secondaries,
+          stockNotes,
+        );
         await splynx.updateTaskComment(sub.splynx_comment_id, body);
         pushedToSplynx = true;
       } catch (err) {
@@ -394,11 +401,13 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
         if (!parsed.success) throw new Error("stored summary is malformed");
         const summary = parsed.data;
         const secondaries = loadSecondaryTechNames(db, id);
+        const stockNotes = loadStockNotes(db, id);
         const body = formatSplynxComment(
           summary,
           sub.app_login,
           !!sub.corrected_summary_json,
           secondaries,
+          stockNotes,
         );
         const result = await splynx.addTaskComment(sub.task_id, sub.splynx_admin_id, body, [
           {
@@ -1115,6 +1124,13 @@ function loadSubmission(db: ReturnType<typeof getDb>, id: number): MinimalSubmis
     )
     .get(id) as MinimalSubmission | undefined;
   return row ?? null;
+}
+
+function loadStockNotes(db: ReturnType<typeof getDb>, submissionId: number): string {
+  const row = db
+    .prepare(`SELECT stock_notes FROM submissions WHERE id = ?`)
+    .get(submissionId) as { stock_notes: string | null } | undefined;
+  return row?.stock_notes ?? "";
 }
 
 function loadSecondaryTechNames(db: ReturnType<typeof getDb>, submissionId: number): string[] {

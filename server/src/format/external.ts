@@ -29,6 +29,7 @@ export function formatSplynxComment(
   techName: string,
   isUpdate: boolean,
   secondaryTechNames?: string[],
+  stockNotes?: string,
 ): string {
   const parts: string[] = [];
   if (isUpdate) {
@@ -38,6 +39,19 @@ export function formatSplynxComment(
   const helpers = (secondaryTechNames ?? []).map((s) => s.trim()).filter(Boolean);
   const withClause = helpers.length > 0 ? ` with ${escapeHtml(helpers.join(", "))}` : "";
   parts.push(`<br><em>Submitted by ${escapeHtml(techName)}${withClause} via Task Updater</em>`);
+
+  // Verbatim "Stock used" block, rendered in red so the office can pick
+  // it out at a glance for invoice reconciliation. Sits below the
+  // attribution line and above the Job/Task Overview. Skipped silently
+  // when the tech left the field blank — the AI-extracted materials in
+  // the body still cover the no-stock case.
+  const stockTrim = (stockNotes ?? "").trim();
+  if (stockTrim) {
+    parts.push(
+      `<br><br><strong style="color:#c5221f">Stock used</strong>` +
+        `<br><span style="color:#c5221f">${nl2br(escapeHtml(stockTrim))}</span>`,
+    );
+  }
 
   const overviewItems = overviewLines(summary.overview);
   if (overviewItems.length > 0) {
