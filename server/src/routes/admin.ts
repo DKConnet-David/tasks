@@ -584,7 +584,7 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
             await part.toBuffer();
             continue;
           }
-          if (photos.length >= 50) {
+          if (photos.length >= 100) {
             await part.toBuffer();
             continue;
           }

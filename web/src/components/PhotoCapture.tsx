@@ -13,7 +13,7 @@ interface Props {
   disabled?: boolean;
 }
 
-const DEFAULT_MAX = 50;
+const DEFAULT_MAX = 100;
 
 export function PhotoCapture({ photos, onChange, max = DEFAULT_MAX, disabled }: Props) {
   const fileRef = useRef<HTMLInputElement>(null);

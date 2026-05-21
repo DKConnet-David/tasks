@@ -48,7 +48,7 @@ async function main() {
       // Per-file cap. 30 MB is generous for HEIC + uncompressed phone JPEGs.
       fileSize: 30 * 1024 * 1024,
       // Photo count cap (matches MAX_PHOTOS in routes/tasks.ts and admin.ts).
-      files: 50,
+      files: 100,
     },
   });
 

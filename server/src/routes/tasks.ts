@@ -9,7 +9,7 @@ import { getDb } from "../db.js";
 import { photoPath, processAndSavePhoto, type SourcePhoto } from "../photos/store.js";
 import { runSubmissionPipeline } from "../pipeline/submit-task.js";
 
-const MAX_PHOTOS = 50;
+const MAX_PHOTOS = 100;
 const COMMENT_MAX = 4000;
 
 export async function registerTaskRoutes(app: FastifyInstance, config: AppConfig): Promise<void> {
