@@ -13,6 +13,12 @@ interface SummarizeArgs {
   config: AppConfig;
   task: SplynxTaskRaw;
   comment: string;
+  /**
+   * Free-text "stock used" the tech typed in a separate field. The AI
+   * is instructed to roll these items into the materials array with
+   * codes preserved verbatim. Empty when blank.
+   */
+  stockNotes?: string;
   photoBuffers: Buffer[];
   techName: string;
   secondaryTechNames?: string[];
@@ -52,7 +58,7 @@ STRUCTURED (drive the PDF report):
   - job_start_time, job_end_time, job_duration: STRICT RULE — fill these ONLY when the actual on-site times are explicitly readable from a photo (typically a job card / sign-off sheet showing something like "Start 09:20 / End 17:30 / Duration 8h 10min"). The Splynx **scheduled** time and Splynx-recorded **estimated duration** are NOT actual times — they describe what was planned, not what happened — and must NEVER be used to populate these three fields. If no photo shows the actual times, return empty strings ("") for all three. If a photographed job card and any other source disagree, the job card wins.
 - work_completed: an ARRAY of bullet-list items naming each major piece of work performed. 6–12 short items typically. Examples: "LiteBeam 5AC antenna installed and configured", "Speed testing performed and verified", "All equipment functioning properly".
 - photo_descriptions: an ARRAY with EXACTLY one item per photo, in upload order. Each item is a single sentence describing what the photo shows in detail — include specific numbers, equipment models, readings, or names visible in the image. Examples: "Network speed test showing 64.90 Mbps download, 27.10 Mbps upload", "EW300-PRO router packaging with serial number visible", "Outdoor antenna installation on pole mount". This array is also used to derive Splynx attachment filenames, so the first 5–8 words of each description should be informative.
-- materials: an ARRAY of equipment / materials used (one per item). Include model numbers and pricing where shown. Examples: "LiteBeam 5AC outdoor antenna (LBAC 23-FTUA)", "Reyee EW300-PRO router (R 500.00)", "Pole mounting hardware".
+- materials: an ARRAY of equipment / materials used (one per item). Include model numbers and pricing where shown. Examples: "LiteBeam 5AC outdoor antenna (LBAC 23-FTUA)", "Reyee EW300-PRO router (R 500.00)", "Pole mounting hardware". When the tech provides a separate "Stock used" block (look for it after the verbatim notes section below), use that as the AUTHORITATIVE source for this array — copy each line into materials preserving any stock codes verbatim, then add anything else visible in the photos that the tech omitted. Never paraphrase or shorten codes.
 - issues_notes: an ARRAY of any issues encountered, deviations, or notable observations. Examples: "Client not on site during completion", "Client told people on the yard where technician mounted router". Empty array if there's nothing remarkable.
 
 - job_card: an object with the four fields below, ALWAYS populated. Inspect every photo carefully looking for a paper "job card" form. The DK Connect job card has a header row of checkboxes (New Install / Takeover Install / Relocation / Repair / Additional / SS), customer details, a parts/items table, a "Notes" section, and at the bottom a "To be completed by client" section with three Y/N rows and a signature line.
@@ -174,6 +180,10 @@ export async function summarize(args: SummarizeArgs): Promise<SummarizeResult> {
       : []),
     "",
     `Tech's notes (verbatim): ${args.comment.trim() || "(no notes provided)"}`,
+    "",
+    `Stock used (verbatim — copy each line into materials, preserving codes): ${
+      (args.stockNotes ?? "").trim() || "(none provided)"
+    }`,
     "",
     `Splynx task description (for context):`,
     cleanDescription || "(empty)",

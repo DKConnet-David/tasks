@@ -136,7 +136,7 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
         `SELECT id, task_id, app_login, splynx_admin_id, source, comment, tech_comment_override,
                 summary_json, corrected_summary_json, splynx_comment_id, splynx_corrected_comment_id,
                 splynx_pdf_file_id, wa_message_id, status, error, admin_resolved, hidden,
-                requirements_check_json,
+                requirements_check_json, stock_notes,
                 created_at, updated_at
          FROM submissions WHERE id = ?`,
       )
@@ -160,6 +160,7 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
           admin_resolved: number;
           hidden: number;
           requirements_check_json: string | null;
+          stock_notes: string | null;
           created_at: number;
           updated_at: number;
         }
@@ -451,10 +452,17 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
         // admin saves the summary via PATCH afterward. Pulling the
         // setting in still lets the AI surface coverage gaps in the
         // preview UI if the operator wants to see them.
+        // Pull stock_notes off the row for the AI prompt — loadSubmission
+        // doesn't include it (the column is only needed on this code path
+        // and on the admin detail GET).
+        const stockRow = db
+          .prepare(`SELECT stock_notes FROM submissions WHERE id = ?`)
+          .get(id) as { stock_notes: string | null } | undefined;
         const result = await summarize({
           config,
           task,
           comment: sub.tech_comment_override ?? sub.comment ?? "",
+          stockNotes: stockRow?.stock_notes ?? "",
           photoBuffers,
           techName: sub.app_login,
           requirementsCheckEnabled:

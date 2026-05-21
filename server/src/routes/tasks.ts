@@ -11,6 +11,7 @@ import { runSubmissionPipeline } from "../pipeline/submit-task.js";
 
 const MAX_PHOTOS = 100;
 const COMMENT_MAX = 4000;
+const STOCK_NOTES_MAX = 2000;
 
 export async function registerTaskRoutes(app: FastifyInstance, config: AppConfig): Promise<void> {
   const { requireSession } = makeAuthGuards(config);
@@ -78,12 +79,15 @@ export async function registerTaskRoutes(app: FastifyInstance, config: AppConfig
     }
 
     let comment = "";
+    let stockNotes = "";
     let secondaryTechIdsRaw = "";
     const photos: SourcePhoto[] = [];
     try {
       for await (const part of req.parts()) {
         if (part.type === "field" && part.fieldname === "comment") {
           comment = String(part.value).slice(0, COMMENT_MAX);
+        } else if (part.type === "field" && part.fieldname === "stock_notes") {
+          stockNotes = String(part.value).slice(0, STOCK_NOTES_MAX);
         } else if (part.type === "field" && part.fieldname === "secondary_tech_ids") {
           secondaryTechIdsRaw = String(part.value);
         } else if (part.type === "file" && part.fieldname === "photos") {
@@ -113,7 +117,9 @@ export async function registerTaskRoutes(app: FastifyInstance, config: AppConfig
       return reply.code(400).send({ error: "no_photos" });
     }
 
-    // Insert submissions row.
+    // Insert submissions row. stock_notes is written via a follow-up
+    // UPDATE only when non-empty so we don't churn the column for jobs
+    // where the tech didn't tag any stock.
     const now = Date.now();
     const insert = db.prepare(`
       INSERT INTO submissions (
@@ -121,6 +127,12 @@ export async function registerTaskRoutes(app: FastifyInstance, config: AppConfig
       ) VALUES (?, ?, ?, 'tech', ?, 'pending', ?, ?)
     `).run(taskId, session.app_login, session.splynx_admin_id, comment, now, now);
     const submissionId = Number(insert.lastInsertRowid);
+
+    if (stockNotes.trim()) {
+      db.prepare(
+        `UPDATE submissions SET stock_notes = ?, updated_at = ? WHERE id = ?`,
+      ).run(stockNotes, Date.now(), submissionId);
+    }
 
     // Persist secondary-tech tags. CSV is parsed defensively — any token
     // that isn't a positive integer is dropped silently. The INSERT itself
@@ -233,6 +245,7 @@ export async function registerTaskRoutes(app: FastifyInstance, config: AppConfig
       splynxAdminId: session.splynx_admin_id,
       appLogin: session.app_login,
       comment,
+      stockNotes,
       photos: photoRows.map((r) => ({
         id: r.id,
         filename: r.filename,

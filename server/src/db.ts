@@ -221,6 +221,16 @@ function migrate(d: Database.Database): void {
   if (!subCols.has("requirements_check_json")) {
     d.exec(`ALTER TABLE submissions ADD COLUMN requirements_check_json TEXT`);
   }
+
+  // 2026-05-21: free-text "stock used" field captured by the tech
+  // alongside the regular Notes. Stored verbatim so the office has an
+  // audit trail of exactly what the tech typed, and ALSO fed to the AI
+  // so the summariser can roll it into the existing materials array
+  // (with codes preserved). NULL on legacy rows and on jobs where the
+  // tech left the field blank.
+  if (!subCols.has("stock_notes")) {
+    d.exec(`ALTER TABLE submissions ADD COLUMN stock_notes TEXT`);
+  }
   const sesCols = cols("sessions");
   if (sesCols.has("splynx_user_id") && !sesCols.has("splynx_admin_id")) {
     d.exec(`ALTER TABLE sessions RENAME COLUMN splynx_user_id TO splynx_admin_id`);

@@ -50,6 +50,7 @@ export function TaskDetail() {
 
   const [photos, setPhotos] = useState<CapturedPhoto[]>([]);
   const [comment, setComment] = useState("");
+  const [stockNotes, setStockNotes] = useState("");
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [phase, setPhase] = useState<SubmitPhase>("idle");
   const [uploadFraction, setUploadFraction] = useState<number | null>(null);
@@ -114,6 +115,7 @@ export function TaskDetail() {
     try {
       const fd = new FormData();
       fd.append("comment", comment);
+      if (stockNotes.trim()) fd.append("stock_notes", stockNotes);
       if (selectedSecondaryIds.length > 0) {
         fd.append("secondary_tech_ids", selectedSecondaryIds.join(","));
       }
@@ -246,6 +248,18 @@ export function TaskDetail() {
             disabled={submitting}
           />
         )}
+
+        <label className="stack" style={{ gap: 4 }}>
+          <span className="muted">Stock used (codes + items, one per line)</span>
+          <textarea
+            value={stockNotes}
+            onChange={(e) => setStockNotes(e.target.value)}
+            placeholder="EW3000GX router x1&#10;CAB-FT5-30m fibre patch lead x1"
+            disabled={submitting}
+            maxLength={2000}
+            rows={3}
+          />
+        </label>
 
         <label className="stack" style={{ gap: 4 }}>
           <span className="muted">Notes (what was done, what was used, anything notable)</span>

@@ -40,6 +40,13 @@ export interface PipelineArgs {
   splynxAdminId: number;
   appLogin: string;
   comment: string;
+  /**
+   * Free-text "stock used" the tech types alongside the regular Notes.
+   * Already stored verbatim on the submission row by the submit handler;
+   * we forward it here so the AI can roll it into the materials array
+   * with codes preserved. Empty string when the tech didn't fill it.
+   */
+  stockNotes?: string;
   photos: PhotoForPipeline[];
   task: SplynxTaskRaw;
 }
@@ -61,6 +68,7 @@ export interface PipelineArgs {
  */
 export async function runSubmissionPipeline(args: PipelineArgs): Promise<PipelineResult> {
   const { config, db, log, submissionId, taskId, splynxAdminId, appLogin, comment, photos, task } = args;
+  const stockNotes = args.stockNotes ?? "";
   const errors: string[] = [];
   let summary: ExternalSummary | null = null;
   let pdfPath: string | null = null;
@@ -105,6 +113,7 @@ export async function runSubmissionPipeline(args: PipelineArgs): Promise<Pipelin
       config,
       task,
       comment,
+      stockNotes,
       photoBuffers: photoData.map((p) => p.buffer),
       techName: appLogin,
       secondaryTechNames,

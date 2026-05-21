@@ -10,6 +10,7 @@ interface Submission {
   source: string;
   comment: string | null;
   tech_comment_override: string | null;
+  stock_notes: string | null;
   summary_json: string | null;
   corrected_summary_json: string | null;
   splynx_comment_id: number | null;
@@ -499,6 +500,31 @@ export function SubmissionDetail() {
           </div>
         )}
       </div>
+
+      {/* Stock used (verbatim from the tech submit form) */}
+      {submission.stock_notes && submission.stock_notes.trim() && (
+        <div className="panel stack">
+          <h2 style={{ margin: 0 }}>Stock used (verbatim)</h2>
+          <p className="muted" style={{ margin: 0, fontSize: "0.9em" }}>
+            Exactly what the tech typed into the "Stock used" field on submit. The AI
+            also folded this into the Materials list above — use this as the source of
+            truth if codes need reconciling against an invoice.
+          </p>
+          <pre
+            style={{
+              whiteSpace: "pre-wrap",
+              margin: 0,
+              padding: 12,
+              background: "var(--c-elev-1, #1a2029)",
+              borderRadius: 6,
+              fontFamily: "inherit",
+              fontSize: "0.95em",
+            }}
+          >
+            {submission.stock_notes}
+          </pre>
+        </div>
+      )}
 
       {/* Tech comment override */}
       <div className="panel stack">
