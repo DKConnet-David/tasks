@@ -134,7 +134,7 @@ export async function generatePdf(args: GeneratePdfArgs): Promise<Buffer> {
         .font("Helvetica")
         .fontSize(9)
         .fillColor(MUTED_COLOR)
-        .text(args.comment, m, doc.y + 2, { width: doc.page.width - m * 2 });
+        .text(sanitizeForPdf(args.comment), m, doc.y + 2, { width: doc.page.width - m * 2 });
       doc.fillColor(HEADING_COLOR);
     }
 
@@ -283,6 +283,28 @@ function bulletLabel(
 function ensureSpace(doc: PDFKit.PDFDocument, needed: number): void {
   const bottom = doc.page.height - 50;
   if (doc.y + needed > bottom) doc.addPage();
+}
+
+/**
+ * Strip carriage returns and other stray control characters before
+ * handing free-text content to PDFKit. Without this, Windows-typed
+ * textarea content (CRLF line endings) renders the bare `\r` (0x0D) as
+ * a visible glyph in Helvetica — it appears as a Ð / Eth-shaped
+ * character at the end of every line in the produced PDF.
+ *
+ * Use for any field that originates from user input (tech notes,
+ * stock_notes, admin overrides). AI-produced fields don't need this —
+ * Claude returns clean strings — but applying it broadly is cheap and
+ * keeps the PDF rendering robust against future input paths.
+ */
+function sanitizeForPdf(s: string): string {
+  return s
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    // Strip remaining C0 control chars (except \n and \t) so a future
+    // copy-paste from a weird source can't introduce another glyph
+    // surprise.
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, "");
 }
 
 function formatDate(d: Date): string {
