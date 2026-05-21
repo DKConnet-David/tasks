@@ -250,7 +250,9 @@ export function TaskDetail() {
         )}
 
         <label className="stack" style={{ gap: 4 }}>
-          <span className="muted">Stock used (codes + items, one per line)</span>
+          <span style={{ color: "var(--c-success)", fontWeight: 500 }}>
+            Stock used (codes + items, one per line)
+          </span>
           <textarea
             value={stockNotes}
             onChange={(e) => setStockNotes(e.target.value)}
@@ -262,7 +264,9 @@ export function TaskDetail() {
         </label>
 
         <label className="stack" style={{ gap: 4 }}>
-          <span className="muted">Notes (what was done, what was used, anything notable)</span>
+          <span style={{ color: "var(--c-danger)", fontWeight: 500 }}>
+            Notes (what was done, what was used, anything notable)
+          </span>
           <textarea
             value={comment}
             onChange={(e) => setComment(e.target.value)}
