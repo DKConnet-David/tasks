@@ -28,4 +28,12 @@ export const SettingKeys = {
   // (including absent) is treated as off. Default off so the extra
   // tokens-per-submission cost only kicks in when the operator opts in.
   requirementsCheckEnabled: "requirements_check_enabled",
+  // "1" → an internal scheduler posts a "daily team summary" WhatsApp
+  // message at 19:00 Africa/Johannesburg to the configured group.
+  // Absent / "0" → no scheduled send. See server/src/scheduler/daily-summary.ts.
+  dailySummaryEnabled: "daily_summary_enabled",
+  // Sentinel: YYYY-MM-DD of the last day the scheduler successfully
+  // sent the daily summary. Prevents double-sends across container
+  // restarts and the once-a-minute interval check.
+  dailySummaryLastSentDate: "daily_summary_last_sent_date",
 } as const;

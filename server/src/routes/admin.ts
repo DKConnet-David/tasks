@@ -20,6 +20,7 @@ import { generatePdf } from "../pdf/generate.js";
 import { formatSplynxComment, formatWhatsAppCaption, splynxTaskUrl } from "../format/external.js";
 import { createTech, listTechs, updateTech } from "../lib/techs.js";
 import { getSetting, setSetting, SettingKeys } from "../lib/settings.js";
+import { runDailySummary } from "../scheduler/daily-summary.js";
 import {
   countActiveAdmins,
   createAdmin,
@@ -938,6 +939,78 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
         "requirements_check_enabled toggled",
       );
       return { ok: true, enabled: parsed.data.enabled };
+    },
+  );
+
+  // ---------- DAILY SUMMARY (scheduled 19:00 WhatsApp post) ----------
+  app.get(
+    "/admin/settings/daily-summary",
+    { preHandler: requireAdmin },
+    async () => {
+      return {
+        enabled: getSetting(db, SettingKeys.dailySummaryEnabled) === "1",
+        last_sent_date: getSetting(db, SettingKeys.dailySummaryLastSentDate),
+        group_jid: getSetting(db, SettingKeys.whatsappGroupJid),
+        group_name: getSetting(db, SettingKeys.whatsappGroupName),
+      };
+    },
+  );
+
+  const DailySummarySettingSchema = z.object({ enabled: z.boolean() });
+  app.patch(
+    "/admin/settings/daily-summary",
+    { preHandler: requireAdmin },
+    async (req, reply) => {
+      const parsed = DailySummarySettingSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return reply.code(400).send({ error: "invalid_body", issues: parsed.error.issues });
+      }
+      // When the operator enables the schedule, mark today as already
+      // sent so it doesn't auto-fire immediately if they happen to flip
+      // the switch after 19:00 — they get tomorrow's report instead.
+      // They can still trigger an immediate test send via the
+      // /send-now endpoint below.
+      if (parsed.data.enabled) {
+        const today = new Date().toLocaleDateString("en-CA");
+        const lastSent = getSetting(db, SettingKeys.dailySummaryLastSentDate);
+        if (lastSent !== today) {
+          setSetting(db, SettingKeys.dailySummaryLastSentDate, today);
+        }
+      }
+      setSetting(db, SettingKeys.dailySummaryEnabled, parsed.data.enabled ? "1" : "0");
+      req.log.info(
+        { actor: req.session?.app_login ?? null, enabled: parsed.data.enabled },
+        "daily_summary_enabled toggled",
+      );
+      return { ok: true, enabled: parsed.data.enabled };
+    },
+  );
+
+  app.post(
+    "/admin/settings/daily-summary/send-now",
+    { preHandler: requireAdmin },
+    async (req, reply) => {
+      // Force=true bypasses the once-a-day guard so the operator can
+      // trigger as many test sends as they want. Sentinel intentionally
+      // not updated by passing dateOverride so the real 19:00 fire is
+      // unaffected.
+      const today = new Date().toLocaleDateString("en-CA");
+      const result = await runDailySummary(
+        { db, config, log: req.log },
+        { force: true, dateOverride: today },
+      );
+      if (result.ok && "sent" in result && result.sent) {
+        return reply.send({
+          ok: true,
+          sent: true,
+          message_id: result.messageId,
+          row_count: result.rowCount,
+        });
+      }
+      if (result.ok && "sent" in result && !result.sent) {
+        return reply.code(400).send({ ok: false, error: result.reason });
+      }
+      return reply.code(503).send({ ok: false, error: (result as { error: string }).error });
     },
   );
 

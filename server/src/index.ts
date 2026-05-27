@@ -9,6 +9,7 @@ import { registerWhatsAppRoutes } from "./routes/whatsapp.js";
 import { registerAdminRoutes } from "./routes/admin.js";
 import { registerPerformanceRoutes } from "./routes/performance.js";
 import { start as startBaileys } from "./whatsapp/baileys.js";
+import { startDailySummaryScheduler } from "./scheduler/daily-summary.js";
 
 async function main() {
   const config = loadConfig();
@@ -84,6 +85,11 @@ async function main() {
     }
     app.log.info(`task-upater server listening on ${address}`);
   });
+
+  // Daily team-summary WhatsApp post. Self-gated on a settings toggle —
+  // if disabled, the tick is a no-op. Once enabled in /admin/settings,
+  // it posts at 19:00 Africa/Johannesburg to the configured group.
+  startDailySummaryScheduler({ db, config, log: app.log });
 }
 
 main().catch((err) => {
