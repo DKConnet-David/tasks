@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { z } from "zod";
 import type { AppConfig } from "../config.js";
 import {
   ExternalSummarySchema,
@@ -292,31 +293,84 @@ export async function summarize(args: SummarizeArgs): Promise<SummarizeResult> {
         required: baseRequired,
       };
 
-  const response = await client.messages.create({
-    model: args.config.CLAUDE_MODEL,
-    max_tokens: 8192,
-    system: systemPrompt,
-    tools: [
-      {
-        name: "save_summary",
-        description: "Save the structured job summary.",
-        input_schema: toolInputSchema,
-      },
-    ],
-    tool_choice: { type: "tool", name: "save_summary" },
-    messages: [
-      {
-        role: "user",
-        content: [...photoBlocks, { type: "text", text: contextText }],
-      },
-    ],
-  });
-
-  const toolUse = response.content.find((c) => c.type === "tool_use");
-  if (!toolUse || toolUse.type !== "tool_use") {
-    throw new Error("Claude did not return a tool_use block");
+  // One Claude attempt: call the model, find the tool_use block, and run
+  // the result through ExternalSummarySchema. Returned as a discriminated
+  // result so the caller can decide whether to retry or coerce. Defined
+  // inline so it captures the prompt + tool schema + photo content
+  // without re-plumbing five args.
+  async function attempt(
+    extraSystem?: string,
+  ): Promise<
+    | { ok: true; parsed: ExternalSummary; raw: Record<string, unknown> }
+    | { ok: false; issues: z.ZodIssue[]; raw: Record<string, unknown> }
+  > {
+    const sys = extraSystem ? `${systemPrompt}\n\n${extraSystem}` : systemPrompt;
+    const r = await client.messages.create({
+      model: args.config.CLAUDE_MODEL,
+      max_tokens: 8192,
+      system: sys,
+      tools: [
+        {
+          name: "save_summary",
+          description: "Save the structured job summary.",
+          input_schema: toolInputSchema,
+        },
+      ],
+      tool_choice: { type: "tool", name: "save_summary" },
+      messages: [
+        {
+          role: "user",
+          content: [...photoBlocks, { type: "text", text: contextText }],
+        },
+      ],
+    });
+    const tu = r.content.find((c) => c.type === "tool_use");
+    if (!tu || tu.type !== "tool_use") {
+      throw new Error("Claude did not return a tool_use block");
+    }
+    const raw = tu.input as Record<string, unknown>;
+    const p = ExternalSummarySchema.safeParse(raw);
+    return p.success
+      ? { ok: true, parsed: p.data, raw }
+      : { ok: false, issues: p.error.issues, raw };
   }
-  const parsed = ExternalSummarySchema.parse(toolUse.input);
+
+  // First attempt — the happy path on the vast majority of submissions.
+  let parsed: ExternalSummary;
+  let rawToolInput: Record<string, unknown>;
+  const first = await attempt();
+  if (first.ok) {
+    parsed = first.parsed;
+    rawToolInput = first.raw;
+  } else {
+    // Claude returned a malformed shape (most often: `overview` as a
+    // string rather than the structured object). Retry once with a
+    // corrective system-prompt nudge listing exactly which fields were
+    // wrong — usually fixes it because the model is stochastic.
+    console.warn(
+      `[summarize] first parse failed for task ${args.task.id}, retrying with corrective nudge`,
+      { issues: first.issues },
+    );
+    const second = await attempt(buildCorrectiveMessage(first.issues));
+    if (second.ok) {
+      console.info(`[summarize] retry succeeded for task ${args.task.id}`);
+      parsed = second.parsed;
+      rawToolInput = second.raw;
+    } else {
+      // Two strikes — give up on a clean structured result and degrade
+      // gracefully. Coerce the second response into a valid
+      // ExternalSummary using safe defaults so the pipeline (PDF +
+      // Splynx + WhatsApp) still completes. The malformed overview
+      // string (if any) is captured into observations so the office
+      // doesn't lose the AI's intended content.
+      console.error(
+        `[summarize] second parse failed for task ${args.task.id}, coercing to safe defaults`,
+        { firstIssues: first.issues, secondIssues: second.issues },
+      );
+      parsed = coerceMalformedSummary(second.raw);
+      rawToolInput = second.raw;
+    }
+  }
 
   // Defensive: ensure photo_descriptions length exactly matches the photo
   // count. Pad with a clearly-marked fallback so the operator can spot any
@@ -347,8 +401,7 @@ export async function summarize(args: SummarizeArgs): Promise<SummarizeResult> {
   // never want a malformed requirements check to fail the whole summary.
   let requirementsCheck: RequirementsCheck | null = null;
   if (reqCheckOn) {
-    const rawInput = toolUse.input as Record<string, unknown>;
-    const reqParse = RequirementsCheckSchema.safeParse(rawInput.requirements_check);
+    const reqParse = RequirementsCheckSchema.safeParse(rawToolInput.requirements_check);
     if (reqParse.success) {
       requirementsCheck = reqParse.data;
     } else {
@@ -360,6 +413,103 @@ export async function summarize(args: SummarizeArgs): Promise<SummarizeResult> {
   }
 
   return { summary: parsed, requirementsCheck };
+}
+
+/**
+ * Build a short corrective system-prompt block listing each Zod issue
+ * from a failed parse. Appended to SYSTEM_PROMPT on the retry call so
+ * the model has explicit feedback about what shape it returned wrong.
+ *
+ * Mentions `overview` specifically because that's the field where the
+ * model most often slips up (returning a stringified summary instead
+ * of the structured object).
+ */
+function buildCorrectiveMessage(issues: z.ZodIssue[]): string {
+  const lines: string[] = [];
+  lines.push(
+    "RETRY CORRECTION: Your previous response to the save_summary tool failed schema validation.",
+    "Re-issue the same tool call with the same content but in the correct shape. Specific problems:",
+  );
+  for (const iss of issues) {
+    const path = iss.path.length === 0 ? "(root)" : iss.path.join(".");
+    lines.push(`  • ${path}: ${iss.message}`);
+  }
+  lines.push(
+    "",
+    "Be especially careful about `overview` — it MUST be an object with the fields service_type, client_name, location, job_date, job_start_time, job_end_time, job_duration (all strings, empty string allowed). Never collapse it into a single string. Array fields (work_completed, photo_descriptions, materials, issues_notes) must be arrays of strings, never a single string.",
+  );
+  return lines.join("\n");
+}
+
+/**
+ * Last-resort coercion for when two consecutive Claude calls both
+ * return a malformed shape. Patches the most common breakage modes
+ * (overview-as-string, missing arrays, missing required strings) and
+ * re-parses through ExternalSummarySchema. If even that fails, falls
+ * back to a hand-built minimum so the pipeline (PDF + Splynx +
+ * WhatsApp) always completes.
+ *
+ * The intent is to never lose a submission to AI flakiness — the
+ * verbatim tech notes and stock list still flow through downstream
+ * outputs; only the structured AI-extracted fields are degraded.
+ */
+function coerceMalformedSummary(raw: Record<string, unknown>): ExternalSummary {
+  const patched: Record<string, unknown> = { ...raw };
+
+  // overview-as-string → wrap as empty object + stash the lost string
+  // into observations so the AI's intended content isn't dropped.
+  if (typeof patched.overview === "string") {
+    const lost = patched.overview;
+    patched.overview = {
+      service_type: "",
+      client_name: "",
+      location: "",
+      job_date: "",
+      job_start_time: "",
+      job_end_time: "",
+      job_duration: "",
+    };
+    const existingObs =
+      typeof patched.observations === "string" ? patched.observations : "";
+    if (!existingObs.trim()) {
+      patched.observations =
+        `[Auto-recovered] AI returned overview as a single string: ${lost}`.slice(
+          0,
+          4000,
+        );
+    }
+  }
+
+  for (const key of ["work_completed", "photo_descriptions", "materials", "issues_notes"]) {
+    if (!Array.isArray(patched[key])) patched[key] = [];
+  }
+  if (typeof patched.headline !== "string" || !(patched.headline as string).trim()) {
+    patched.headline = "Summary recovered from malformed AI response";
+  }
+  if (
+    typeof patched.what_was_done !== "string" ||
+    !(patched.what_was_done as string).trim()
+  ) {
+    patched.what_was_done =
+      "(See verbatim tech notes — AI summary could not be parsed)";
+  }
+  for (const key of ["observations", "follow_ups"]) {
+    if (typeof patched[key] !== "string") patched[key] = "";
+  }
+
+  const reparsed = ExternalSummarySchema.safeParse(patched);
+  if (reparsed.success) return reparsed.data;
+
+  console.error("[summarize] coercion still failed Zod parse, returning hand-built minimum", {
+    issues: reparsed.error.issues,
+    patchedKeys: Object.keys(patched),
+  });
+  // Absolute minimum that satisfies the schema. Defaults fill in the
+  // arrays + overview + job_type automatically.
+  return ExternalSummarySchema.parse({
+    headline: "Summary recovered from malformed AI response",
+    what_was_done: "(See verbatim tech notes — AI summary could not be parsed)",
+  });
 }
 
 function scrubFabricatedTimes(
