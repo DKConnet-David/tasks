@@ -231,6 +231,20 @@ function migrate(d: Database.Database): void {
   if (!subCols.has("stock_notes")) {
     d.exec(`ALTER TABLE submissions ADD COLUMN stock_notes TEXT`);
   }
+
+  // 2026-05-27: client-generated idempotency token, persisted so a
+  // retry of the same submit (e.g. lost response, tech re-taps) hits
+  // a duplicate check before a second row is inserted. NULL when the
+  // client didn't send one (legacy bundle, admin manual submit path).
+  // Partial index keeps NULL rows out of the lookup entirely.
+  if (!subCols.has("idempotency_key")) {
+    d.exec(`ALTER TABLE submissions ADD COLUMN idempotency_key TEXT`);
+    d.exec(
+      `CREATE INDEX IF NOT EXISTS idx_submissions_idem
+         ON submissions(app_login, idempotency_key)
+         WHERE idempotency_key IS NOT NULL`,
+    );
+  }
   const sesCols = cols("sessions");
   if (sesCols.has("splynx_user_id") && !sesCols.has("splynx_admin_id")) {
     d.exec(`ALTER TABLE sessions RENAME COLUMN splynx_user_id TO splynx_admin_id`);

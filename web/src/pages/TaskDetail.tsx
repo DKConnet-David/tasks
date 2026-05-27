@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { ApiError, api } from "../api";
 import { PhotoCapture, type CapturedPhoto } from "../components/PhotoCapture";
@@ -41,6 +41,27 @@ interface SecondaryTech {
   name: string;
 }
 
+interface DuplicateInfo {
+  existing_submission_id: number;
+  existing_task_id: number;
+  existing_created_at: number;
+  existing_status: string;
+  splynx_comment_posted: boolean;
+}
+
+/**
+ * crypto.randomUUID() exists in all modern browsers (PWA target is
+ * fine), but we fall back to a Math.random-based shape for very old
+ * runtimes so the submit never breaks. The token is opaque to the
+ * server — it only checks equality against rows already inserted.
+ */
+function makeIdempotencyKey(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `fb-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
+}
+
 export function TaskDetail() {
   const { id } = useParams<{ id: string }>();
   const nav = useNavigate();
@@ -58,6 +79,12 @@ export function TaskDetail() {
   const [uploadTotal, setUploadTotal] = useState(0);
   const [secondaryTechRoster, setSecondaryTechRoster] = useState<SecondaryTech[]>([]);
   const [selectedSecondaryIds, setSelectedSecondaryIds] = useState<number[]>([]);
+  // Idempotency token persists across retries of the same form instance
+  // so a lost response on the first attempt doesn't create a duplicate
+  // on the second. Regenerated only when the tech explicitly confirms a
+  // re-send via the duplicate warning panel.
+  const idempotencyKey = useRef<string>(makeIdempotencyKey());
+  const [duplicateInfo, setDuplicateInfo] = useState<DuplicateInfo | null>(null);
   const submitting = phase === "uploading" || phase === "processing";
 
   useEffect(() => {
@@ -107,6 +134,7 @@ export function TaskDetail() {
       return;
     }
     setSubmitError(null);
+    setDuplicateInfo(null);
     setPhase("uploading");
     setUploadFraction(0);
     setUploadLoaded(0);
@@ -119,6 +147,7 @@ export function TaskDetail() {
       if (selectedSecondaryIds.length > 0) {
         fd.append("secondary_tech_ids", selectedSecondaryIds.join(","));
       }
+      fd.append("idempotency_key", idempotencyKey.current);
       for (const p of photos) fd.append("photos", p.file, p.file.name || "photo.jpg");
 
       const res = await api.upload<SubmitResponse>(`/tasks/${id}/submit`, fd, {
@@ -138,6 +167,11 @@ export function TaskDetail() {
       if (e instanceof ApiError) {
         if (e.status === 400 && (e.body as { error?: string })?.error === "no_photos") {
           setSubmitError("No valid photos uploaded.");
+        } else if (e.status === 409 && (e.body as { error?: string })?.error === "duplicate_submission") {
+          // Server already saw this idempotency token. Show the
+          // duplicate-warning panel; the tech decides whether to retry
+          // with a fresh token or just navigate to the existing one.
+          setDuplicateInfo(e.body as DuplicateInfo);
         } else if (e.status === 413) {
           setSubmitError("Photos are too large — try fewer or smaller files.");
         } else {
@@ -148,6 +182,16 @@ export function TaskDetail() {
       }
       setPhase("error");
     }
+  }
+
+  function confirmResubmit() {
+    // Fresh token bypasses the server's dedup check, so a deliberate
+    // re-send goes through cleanly. Clearing the warning panel before
+    // re-entering handleSubmit so the new attempt starts from a clean
+    // slate.
+    idempotencyKey.current = makeIdempotencyKey();
+    setDuplicateInfo(null);
+    handleSubmit();
   }
 
   if (loading) {
@@ -278,6 +322,10 @@ export function TaskDetail() {
 
         {submitError && <div className="danger">{submitError}</div>}
 
+        {duplicateInfo && (
+          <DuplicateWarning info={duplicateInfo} onConfirm={confirmResubmit} />
+        )}
+
         <button onClick={handleSubmit} disabled={submitting || photos.length === 0}>
           {phase === "uploading"
             ? "Uploading…"
@@ -311,6 +359,47 @@ export function TaskDetail() {
           </div>
         </>
       )}
+    </div>
+  );
+}
+
+function DuplicateWarning({
+  info,
+  onConfirm,
+}: {
+  info: DuplicateInfo;
+  onConfirm: () => void;
+}) {
+  const when = new Date(info.existing_created_at).toLocaleString();
+  return (
+    <div
+      className="stack"
+      style={{
+        gap: 8,
+        padding: "10px 12px",
+        background: "rgba(227, 179, 65, 0.12)",
+        border: "1px solid rgba(227, 179, 65, 0.5)",
+        borderRadius: "var(--r)",
+      }}
+    >
+      <div>
+        <strong>Looks like this just got submitted.</strong>
+        <div style={{ fontSize: "0.9em", marginTop: 4 }}>
+          Submission #{info.existing_submission_id} for task #{info.existing_task_id}{" "}
+          landed at {when} (status: {info.existing_status}
+          {info.splynx_comment_posted ? " · already posted to Splynx" : ""}).
+        </div>
+      </div>
+      <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+        <Link to={`/submitting/${info.existing_submission_id}`}>
+          <button className="secondary" type="button">
+            View existing submission
+          </button>
+        </Link>
+        <button type="button" onClick={onConfirm}>
+          Submit again anyway
+        </button>
+      </div>
     </div>
   );
 }

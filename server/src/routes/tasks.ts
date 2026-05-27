@@ -12,6 +12,11 @@ import { runSubmissionPipeline } from "../pipeline/submit-task.js";
 const MAX_PHOTOS = 100;
 const COMMENT_MAX = 4000;
 const STOCK_NOTES_MAX = 2000;
+const IDEMPOTENCY_KEY_MAX = 100;
+// Restrict to printable ASCII so a bad client can't shove control bytes
+// or unicode lookalikes through the dedup index. UUIDs are well within
+// this range; anything else is ignored as if no key was sent.
+const IDEMPOTENCY_KEY_RE = /^[\x21-\x7E]{1,100}$/;
 
 export async function registerTaskRoutes(app: FastifyInstance, config: AppConfig): Promise<void> {
   const { requireSession } = makeAuthGuards(config);
@@ -81,6 +86,7 @@ export async function registerTaskRoutes(app: FastifyInstance, config: AppConfig
     let comment = "";
     let stockNotes = "";
     let secondaryTechIdsRaw = "";
+    let idempotencyKey = "";
     const photos: SourcePhoto[] = [];
     try {
       for await (const part of req.parts()) {
@@ -90,6 +96,12 @@ export async function registerTaskRoutes(app: FastifyInstance, config: AppConfig
           stockNotes = String(part.value).slice(0, STOCK_NOTES_MAX);
         } else if (part.type === "field" && part.fieldname === "secondary_tech_ids") {
           secondaryTechIdsRaw = String(part.value);
+        } else if (part.type === "field" && part.fieldname === "idempotency_key") {
+          const raw = String(part.value).slice(0, IDEMPOTENCY_KEY_MAX);
+          // Silently drop anything that doesn't match the printable-ASCII
+          // shape — treats malformed tokens as "no token sent" rather
+          // than failing the submission outright.
+          if (IDEMPOTENCY_KEY_RE.test(raw)) idempotencyKey = raw;
         } else if (part.type === "file" && part.fieldname === "photos") {
           if (!part.mimetype.startsWith("image/")) {
             // Drain the stream so the parser doesn't hang on the unread file.
@@ -117,15 +129,59 @@ export async function registerTaskRoutes(app: FastifyInstance, config: AppConfig
       return reply.code(400).send({ error: "no_photos" });
     }
 
+    // Idempotency guard. If the same client token has already been used
+    // by this tech, return 409 with the existing submission so the UI
+    // can warn the tech and let them confirm a deliberate re-send (by
+    // regenerating the token and retrying). Legacy clients that omit
+    // the field skip this check entirely — behaviour is purely
+    // additive.
+    if (idempotencyKey) {
+      const existing = db
+        .prepare(
+          `SELECT id, task_id, status, created_at, splynx_comment_id
+           FROM submissions
+           WHERE app_login = ? AND idempotency_key = ?
+           ORDER BY id DESC
+           LIMIT 1`,
+        )
+        .get(session.app_login, idempotencyKey) as
+        | {
+            id: number;
+            task_id: number;
+            status: string;
+            created_at: number;
+            splynx_comment_id: number | null;
+          }
+        | undefined;
+      if (existing) {
+        return reply.code(409).send({
+          error: "duplicate_submission",
+          existing_submission_id: existing.id,
+          existing_task_id: existing.task_id,
+          existing_created_at: existing.created_at,
+          existing_status: existing.status,
+          splynx_comment_posted: existing.splynx_comment_id !== null,
+        });
+      }
+    }
+
     // Insert submissions row. stock_notes is written via a follow-up
     // UPDATE only when non-empty so we don't churn the column for jobs
     // where the tech didn't tag any stock.
     const now = Date.now();
     const insert = db.prepare(`
       INSERT INTO submissions (
-        task_id, app_login, splynx_admin_id, source, comment, status, created_at, updated_at
-      ) VALUES (?, ?, ?, 'tech', ?, 'pending', ?, ?)
-    `).run(taskId, session.app_login, session.splynx_admin_id, comment, now, now);
+        task_id, app_login, splynx_admin_id, source, comment, status, idempotency_key, created_at, updated_at
+      ) VALUES (?, ?, ?, 'tech', ?, 'pending', ?, ?, ?)
+    `).run(
+      taskId,
+      session.app_login,
+      session.splynx_admin_id,
+      comment,
+      idempotencyKey || null,
+      now,
+      now,
+    );
     const submissionId = Number(insert.lastInsertRowid);
 
     if (stockNotes.trim()) {
