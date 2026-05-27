@@ -16,6 +16,7 @@ import { summarize } from "../ai/summarize.js";
 import { pipelineSendDocument } from "./whatsapp.js";
 import { photoPath, processAndSavePhoto, type SourcePhoto } from "../photos/store.js";
 import { runSubmissionPipeline } from "../pipeline/submit-task.js";
+import { generatePdf } from "../pdf/generate.js";
 import { formatSplynxComment, formatWhatsAppCaption, splynxTaskUrl } from "../format/external.js";
 import { createTech, listTechs, updateTech } from "../lib/techs.js";
 import { getSetting, setSetting, SettingKeys } from "../lib/settings.js";
@@ -387,14 +388,6 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
 
       // PDF
       try {
-        const pdfFile = path.join(
-          config.DATA_DIR,
-          "photos",
-          String(sub.task_id),
-          String(sub.id),
-          "report.pdf",
-        );
-        const pdfBuffer = await fs.readFile(pdfFile);
         const summarySource = sub.corrected_summary_json ?? sub.summary_json;
         if (!summarySource) throw new Error("no summary stored");
         const parsed = ExternalSummarySchema.safeParse(safeParse(summarySource));
@@ -402,6 +395,64 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
         const summary = parsed.data;
         const secondaries = loadSecondaryTechNames(db, id);
         const stockNotes = loadStockNotes(db, id);
+
+        // PDF buffer: try the cached file first (the happy path), and
+        // fall back to rebuilding from the stored summary + saved
+        // photos when the file is missing. Missing-file happens when
+        // the original pipeline failed before the PDF step (e.g.
+        // summarize threw on a malformed AI response). Once the admin
+        // has regenerated a working summary, reattach should be able
+        // to recover instead of erroring with ENOENT.
+        const pdfFile = path.join(
+          config.DATA_DIR,
+          "photos",
+          String(sub.task_id),
+          String(sub.id),
+          "report.pdf",
+        );
+        let pdfBuffer: Buffer;
+        try {
+          pdfBuffer = await fs.readFile(pdfFile);
+        } catch (readErr) {
+          if ((readErr as NodeJS.ErrnoException).code !== "ENOENT") throw readErr;
+          req.log.info(
+            { submissionId: id, taskId: sub.task_id },
+            "reattach: PDF missing, rebuilding from stored summary",
+          );
+          const taskRaw = await splynx.getTaskRaw(sub.task_id);
+          const photoRows = db
+            .prepare(
+              `SELECT id, filename, width, height
+               FROM submission_photos
+               WHERE submission_id = ?
+               ORDER BY id ASC`,
+            )
+            .all(id) as { id: number; filename: string; width: number; height: number }[];
+          const photos = await Promise.all(
+            photoRows.map(async (p) => ({
+              buffer: await fs.readFile(
+                photoPath(config.DATA_DIR, sub.task_id, sub.id, p.filename),
+              ),
+              width: p.width,
+              height: p.height,
+            })),
+          );
+          pdfBuffer = await generatePdf({
+            task: taskRaw,
+            summary,
+            comment: sub.tech_comment_override ?? sub.comment ?? "",
+            photos,
+            techName: sub.app_login,
+            submittedAt: new Date(sub.created_at),
+            secondaryTechNames: secondaries,
+          });
+          // Cache the freshly-built PDF back to disk so the next
+          // operation (e.g. tech tapping Download PDF) doesn't have to
+          // rebuild from scratch.
+          await fs.mkdir(path.dirname(pdfFile), { recursive: true });
+          await fs.writeFile(pdfFile, pdfBuffer);
+        }
+
         const body = formatSplynxComment(
           summary,
           sub.app_login,
