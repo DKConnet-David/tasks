@@ -105,6 +105,7 @@ export function Performance() {
       ) : sorted.length === 0 ? (
         <>
           <div className="panel muted">No techs have submitted in this period.</div>
+          <DailyBreakdownPanel />
           <SecondaryTechsPanel period={period} />
         </>
       ) : (
@@ -187,7 +188,12 @@ export function Performance() {
         </div>
       )}
 
-      {data && sorted.length > 0 && <SecondaryTechsPanel period={period} />}
+      {data && sorted.length > 0 && (
+        <>
+          <DailyBreakdownPanel />
+          <SecondaryTechsPanel period={period} />
+        </>
+      )}
     </div>
   );
 }
@@ -258,6 +264,123 @@ function SecondaryTechsPanel({ period }: { period: Period }) {
                         (disabled)
                       </span>
                     )}
+                  </td>
+                  <td style={{ ...td(), textAlign: "right" }}>
+                    <strong>{t.job_count}</strong>
+                  </td>
+                  <td style={td()}>
+                    {t.last_submission_at
+                      ? new Date(t.last_submission_at).toLocaleString()
+                      : <span className="muted">—</span>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---- Daily breakdown panel ----
+// Independent of the monthly period selector — this owns its own date
+// so the operator can scan today's activity even while viewing a
+// historical month in the team table.
+
+interface DailyTechRow {
+  app_login: string;
+  job_count: number;
+  last_submission_at: number | null;
+}
+
+interface DailyResponse {
+  date: string;
+  since: number;
+  techs: DailyTechRow[];
+}
+
+function todayKey(): string {
+  // YYYY-MM-DD in the viewer's local timezone — paired with a server
+  // that runs Africa/Johannesburg, this matches the wall-clock day for
+  // the office. en-CA's format happens to be ISO YYYY-MM-DD, which
+  // saves a manual padStart for month/day.
+  return new Date().toLocaleDateString("en-CA");
+}
+
+function prettyDate(ymd: string): string {
+  // "2026-05-27" → "Wednesday, 27 May 2026"
+  const [y, m, d] = ymd.split("-").map(Number);
+  if (!y || !m || !d) return ymd;
+  return new Date(y, m - 1, d).toLocaleDateString("en-ZA", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  });
+}
+
+function DailyBreakdownPanel() {
+  const [date, setDate] = useState<string>(() => todayKey());
+  const [data, setData] = useState<DailyResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setData(null);
+    setError(null);
+    api
+      .get<DailyResponse>(`/admin/performance/daily?date=${encodeURIComponent(date)}`)
+      .then(setData)
+      .catch((e: unknown) => {
+        if (e instanceof ApiError) setError(`Failed to load (${e.status})`);
+        else setError("Network error");
+      });
+  }, [date]);
+
+  const isToday = date === todayKey();
+
+  return (
+    <div className="panel stack">
+      <div className="row" style={{ justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+        <div>
+          <h3 style={{ margin: 0 }}>Daily breakdown</h3>
+          <p className="muted" style={{ margin: "4px 0 0", fontSize: "0.85em" }}>
+            Submissions on {prettyDate(date)}
+            {isToday && " (today)"}. Independent of the month filter above.
+          </p>
+        </div>
+        <input
+          type="date"
+          value={date}
+          max={todayKey()}
+          onChange={(e) => setDate(e.target.value)}
+          style={{ width: "auto", minWidth: 150 }}
+          aria-label="Day to view"
+        />
+      </div>
+      {error ? (
+        <div className="danger">{error}</div>
+      ) : !data ? (
+        <div className="muted">Loading…</div>
+      ) : data.techs.length === 0 ? (
+        <div className="muted">No submissions on {prettyDate(date)}.</div>
+      ) : (
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.92em" }}>
+            <thead>
+              <tr style={{ textAlign: "left", color: "var(--c-muted)" }}>
+                <th style={th()}>Tech</th>
+                <th style={{ ...th(), textAlign: "right" }}>Jobs</th>
+                <th style={th()}>Last activity</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.techs.map((t) => (
+                <tr key={t.app_login} style={{ borderTop: "1px solid var(--c-border)" }}>
+                  <td style={td()}>
+                    <Link to={`/admin/performance/${encodeURIComponent(t.app_login)}`}>
+                      <strong>{t.app_login}</strong>
+                    </Link>
                   </td>
                   <td style={{ ...td(), textAlign: "right" }}>
                     <strong>{t.job_count}</strong>

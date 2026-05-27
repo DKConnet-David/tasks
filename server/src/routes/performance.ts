@@ -53,6 +53,21 @@ function periodBounds(p: ParsedPeriod): { since: number; endExclusive: number } 
   return { since, endExclusive };
 }
 
+// Returns [since, endExclusive) for the calendar day matching the given
+// YYYY-MM-DD string, in the container's local timezone. Null when the
+// string is malformed — caller is expected to 400 in that case.
+function parseDayBounds(
+  raw: string | undefined,
+): { date: string; since: number; endExclusive: number } | null {
+  if (!raw || !/^\d{4}-\d{2}-\d{2}$/.test(raw)) return null;
+  const [y, m, d] = raw.split("-").map(Number);
+  if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) return null;
+  const since = new Date(y!, m! - 1, d!).getTime();
+  const endExclusive = new Date(y!, m! - 1, d! + 1).getTime();
+  if (!Number.isFinite(since) || !Number.isFinite(endExclusive)) return null;
+  return { date: raw, since, endExclusive };
+}
+
 function periodLabel(p: ParsedPeriod): string {
   if (p.kind === "all") return "all time";
   const d = new Date(p.year, p.month - 1, 1);
@@ -343,6 +358,45 @@ export async function registerPerformanceRoutes(
           job_count: r.job_count,
           last_submission_at: r.last_submission_at,
         })),
+      });
+    },
+  );
+
+  // ---------------------------------------------------------------
+  // GET /admin/performance/daily?date=YYYY-MM-DD
+  // Per-tech job count for one calendar day. Independent of the
+  // monthly period selector — the panel on Performance.tsx carries
+  // its own date and queries this endpoint each time the user picks
+  // a new day. Hidden submissions excluded.
+  // ---------------------------------------------------------------
+  app.get(
+    "/admin/performance/daily",
+    { preHandler: requireAdmin },
+    async (req, reply) => {
+      const bounds = parseDayBounds((req.query as { date?: string }).date);
+      if (!bounds) return reply.code(400).send({ error: "invalid_date" });
+
+      const rows = db
+        .prepare(
+          `SELECT app_login,
+                  COUNT(*) AS job_count,
+                  MAX(created_at) AS last_submission_at
+           FROM submissions
+           WHERE created_at >= ? AND created_at < ?
+             AND hidden = 0
+           GROUP BY app_login
+           ORDER BY job_count DESC, app_login COLLATE NOCASE ASC`,
+        )
+        .all(bounds.since, bounds.endExclusive) as Array<{
+        app_login: string;
+        job_count: number;
+        last_submission_at: number | null;
+      }>;
+
+      return reply.send({
+        date: bounds.date,
+        since: bounds.since,
+        techs: rows,
       });
     },
   );
