@@ -353,8 +353,10 @@ export function TaskDetail() {
           />
         </label>
 
-        {submitError && <div className="danger">{submitError}</div>}
-
+        {/* Submit error itself renders in the SubmitProgress panel below
+            when phase === "error", so we don't double up here. Only the
+            duplicate-warning panel sits above the Submit button so the
+            tech reads the warning before tapping the action button. */}
         {duplicateInfo && (
           <DuplicateWarning info={duplicateInfo} onConfirm={confirmResubmit} />
         )}
