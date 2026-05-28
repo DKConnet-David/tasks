@@ -1373,6 +1373,10 @@ const JOB_TYPE_LABELS: Record<string, string> = {
   voip_installation: "VoIP Installation",
   complaint: "Complaint",
   other: "Other",
+  // Zoom-billable overrides (tech-driven, never AI-classified).
+  zoom_fibre_install: "Fibre Install (Zoom)",
+  zoom_ont_drop: "ONT Drop (Zoom)",
+  zoom_reinstall: "Zoom Reinstall",
 };
 
 function prettyType(t: string): string {

@@ -8,6 +8,9 @@ export interface TechRow {
   splynx_admin_id: number;
   display_name: string;
   is_active: 0 | 1;
+  // 1 → tech sees the Zoom-billable type picker on the submit form,
+  // which overrides the AI's job_type classification.
+  zoom_billable: 0 | 1;
   created_at: number;
   updated_at: number;
 }
@@ -34,7 +37,8 @@ export async function dummyVerify(plain: string): Promise<void> {
 export function findTechByLogin(db: Database.Database, login: string): TechRow | null {
   const row = db
     .prepare(
-      `SELECT id, login, password_hash, splynx_admin_id, display_name, is_active, created_at, updated_at
+      `SELECT id, login, password_hash, splynx_admin_id, display_name, is_active,
+              zoom_billable, created_at, updated_at
        FROM techs WHERE login = ?`,
     )
     .get(login) as TechRow | undefined;
@@ -44,7 +48,8 @@ export function findTechByLogin(db: Database.Database, login: string): TechRow |
 export function listTechs(db: Database.Database): Omit<TechRow, "password_hash">[] {
   return db
     .prepare(
-      `SELECT id, login, splynx_admin_id, display_name, is_active, created_at, updated_at
+      `SELECT id, login, splynx_admin_id, display_name, is_active,
+              zoom_billable, created_at, updated_at
        FROM techs ORDER BY display_name COLLATE NOCASE ASC`,
     )
     .all() as Omit<TechRow, "password_hash">[];
@@ -57,16 +62,26 @@ export async function createTech(
     password: string;
     splynx_admin_id: number;
     display_name: string;
+    zoom_billable?: boolean;
   },
 ): Promise<number> {
   const hash = await hashPassword(args.password);
   const now = Date.now();
   const result = db
     .prepare(
-      `INSERT INTO techs (login, password_hash, splynx_admin_id, display_name, is_active, created_at, updated_at)
-       VALUES (?, ?, ?, ?, 1, ?, ?)`,
+      `INSERT INTO techs (login, password_hash, splynx_admin_id, display_name,
+                          is_active, zoom_billable, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 1, ?, ?, ?)`,
     )
-    .run(args.login, hash, args.splynx_admin_id, args.display_name, now, now);
+    .run(
+      args.login,
+      hash,
+      args.splynx_admin_id,
+      args.display_name,
+      args.zoom_billable ? 1 : 0,
+      now,
+      now,
+    );
   return Number(result.lastInsertRowid);
 }
 
@@ -78,6 +93,7 @@ export async function updateTech(
     splynx_admin_id?: number;
     display_name?: string;
     is_active?: boolean;
+    zoom_billable?: boolean;
   },
 ): Promise<void> {
   const sets: string[] = [];
@@ -97,6 +113,10 @@ export async function updateTech(
   if (patch.is_active !== undefined) {
     sets.push("is_active = ?");
     params.push(patch.is_active ? 1 : 0);
+  }
+  if (patch.zoom_billable !== undefined) {
+    sets.push("zoom_billable = ?");
+    params.push(patch.zoom_billable ? 1 : 0);
   }
   if (sets.length === 0) return;
   sets.push("updated_at = ?");

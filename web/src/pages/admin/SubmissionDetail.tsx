@@ -36,6 +36,11 @@ const JOB_TYPES = [
   { value: "voip_installation", label: "VoIP Installation" },
   { value: "complaint", label: "Complaint" },
   { value: "other", label: "Other" },
+  // Zoom-billable overrides — tech-driven only. Listed at the bottom
+  // so the admin override dropdown groups them visually.
+  { value: "zoom_fibre_install", label: "Fibre Install (Zoom)" },
+  { value: "zoom_ont_drop", label: "ONT Drop (Zoom)" },
+  { value: "zoom_reinstall", label: "Zoom Reinstall" },
 ] as const;
 
 interface Photo {

@@ -7,6 +7,7 @@ interface Tech {
   splynx_admin_id: number;
   display_name: string;
   is_active: 0 | 1;
+  zoom_billable: 0 | 1;
   created_at: number;
   updated_at: number;
 }
@@ -16,6 +17,7 @@ interface TechCreateForm {
   password: string;
   splynx_admin_id: string;
   display_name: string;
+  zoom_billable: boolean;
 }
 
 export function TechsPage() {
@@ -30,6 +32,7 @@ export function TechsPage() {
     password: "",
     splynx_admin_id: "",
     display_name: "",
+    zoom_billable: false,
   });
   const [showAdd, setShowAdd] = useState(false);
 
@@ -38,6 +41,7 @@ export function TechsPage() {
   const [editPassword, setEditPassword] = useState("");
   const [editAdminId, setEditAdminId] = useState("");
   const [editName, setEditName] = useState("");
+  const [editZoomBillable, setEditZoomBillable] = useState(false);
 
   async function load() {
     try {
@@ -64,9 +68,16 @@ export function TechsPage() {
         password: form.password,
         splynx_admin_id: Number(form.splynx_admin_id),
         display_name: form.display_name.trim(),
+        zoom_billable: form.zoom_billable,
       });
       setOkMessage(`Created tech "${form.login}". They can sign in now.`);
-      setForm({ login: "", password: "", splynx_admin_id: "", display_name: "" });
+      setForm({
+        login: "",
+        password: "",
+        splynx_admin_id: "",
+        display_name: "",
+        zoom_billable: false,
+      });
       setShowAdd(false);
       await load();
     } catch (e) {
@@ -98,6 +109,7 @@ export function TechsPage() {
     setEditPassword("");
     setEditAdminId(String(t.splynx_admin_id));
     setEditName(t.display_name);
+    setEditZoomBillable(t.zoom_billable === 1);
     setError(null);
     setOkMessage(null);
   }
@@ -113,6 +125,8 @@ export function TechsPage() {
         patch["splynx_admin_id"] = Number(editAdminId);
       if (editName.trim() && editName.trim() !== editing.display_name)
         patch["display_name"] = editName.trim();
+      if (editZoomBillable !== (editing.zoom_billable === 1))
+        patch["zoom_billable"] = editZoomBillable;
       if (Object.keys(patch).length === 0) {
         setEditing(null);
         return;
@@ -191,6 +205,17 @@ export function TechsPage() {
                 />
               </label>
             </div>
+            <label className="row" style={{ gap: 6, alignItems: "center", fontSize: "0.9em" }}>
+              <input
+                type="checkbox"
+                checked={form.zoom_billable}
+                onChange={(e) => setForm({ ...form, zoom_billable: e.target.checked })}
+              />
+              <span>
+                Zoom billable — show the Zoom billable type picker on this tech's
+                submit form (overrides AI classification).
+              </span>
+            </label>
             <button disabled={busy === "add"}>{busy === "add" ? "Creating…" : "Create"}</button>
           </form>
         )}
@@ -226,9 +251,19 @@ export function TechsPage() {
                     <td style={td()}>{t.display_name}</td>
                     <td style={td()}>{t.splynx_admin_id}</td>
                     <td style={td()}>
-                      <span className={t.is_active ? "badge success" : "badge"}>
-                        {t.is_active ? "active" : "disabled"}
-                      </span>
+                      <div className="row" style={{ gap: 4, flexWrap: "wrap" }}>
+                        <span className={t.is_active ? "badge success" : "badge"}>
+                          {t.is_active ? "active" : "disabled"}
+                        </span>
+                        {t.zoom_billable === 1 && (
+                          <span
+                            className="badge"
+                            title="Sees the Zoom billable type picker on the submit form"
+                          >
+                            Zoom
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td style={td()}>{new Date(t.created_at).toLocaleString()}</td>
                     <td style={td()}>
@@ -297,6 +332,17 @@ export function TechsPage() {
             <label className="stack" style={{ gap: 4 }}>
               <span className="muted">Display name</span>
               <input value={editName} onChange={(e) => setEditName(e.target.value)} />
+            </label>
+            <label className="row" style={{ gap: 6, alignItems: "center", fontSize: "0.9em" }}>
+              <input
+                type="checkbox"
+                checked={editZoomBillable}
+                onChange={(e) => setEditZoomBillable(e.target.checked)}
+              />
+              <span>
+                Zoom billable — show the Zoom billable type picker on this tech's
+                submit form.
+              </span>
             </label>
             <div className="row" style={{ gap: 8, justifyContent: "flex-end" }}>
               <button className="secondary" onClick={() => setEditing(null)}>

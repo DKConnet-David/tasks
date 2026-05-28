@@ -8,6 +8,7 @@ import type { AppConfig } from "../config.js";
 import { getDb } from "../db.js";
 import { photoPath, processAndSavePhoto, type SourcePhoto } from "../photos/store.js";
 import { runSubmissionPipeline } from "../pipeline/submit-task.js";
+import { ZOOM_BILLABLE_TYPES, type ZoomBillableType } from "../types.js";
 
 const MAX_PHOTOS = 100;
 const COMMENT_MAX = 4000;
@@ -87,6 +88,7 @@ export async function registerTaskRoutes(app: FastifyInstance, config: AppConfig
     let stockNotes = "";
     let secondaryTechIdsRaw = "";
     let idempotencyKey = "";
+    let zoomBillableOverride: ZoomBillableType | null = null;
     const photos: SourcePhoto[] = [];
     try {
       for await (const part of req.parts()) {
@@ -102,6 +104,13 @@ export async function registerTaskRoutes(app: FastifyInstance, config: AppConfig
           // shape — treats malformed tokens as "no token sent" rather
           // than failing the submission outright.
           if (IDEMPOTENCY_KEY_RE.test(raw)) idempotencyKey = raw;
+        } else if (part.type === "field" && part.fieldname === "zoom_billable_type") {
+          // Only accept one of the closed ZOOM_BILLABLE_TYPES values.
+          // Permission to set this is verified server-side below
+          // (the sending tech must have zoom_billable = 1).
+          const raw = String(part.value);
+          const match = ZOOM_BILLABLE_TYPES.find((t) => t.value === raw);
+          if (match) zoomBillableOverride = match.value;
         } else if (part.type === "file" && part.fieldname === "photos") {
           if (!part.mimetype.startsWith("image/")) {
             // Drain the stream so the parser doesn't hang on the unread file.
@@ -127,6 +136,23 @@ export async function registerTaskRoutes(app: FastifyInstance, config: AppConfig
 
     if (photos.length === 0) {
       return reply.code(400).send({ error: "no_photos" });
+    }
+
+    // Zoom-billable override permission check. Only techs whose row
+    // has zoom_billable = 1 can set this field; anyone else silently
+    // gets the override dropped (treated as if they didn't send it).
+    // Admins can also use the override for testing via /me?is_admin.
+    if (zoomBillableOverride && !session.is_admin) {
+      const tech = db
+        .prepare(`SELECT zoom_billable FROM techs WHERE login = ?`)
+        .get(session.app_login) as { zoom_billable: number } | undefined;
+      if (tech?.zoom_billable !== 1) {
+        req.log.warn(
+          { appLogin: session.app_login, attempted: zoomBillableOverride },
+          "zoom_billable_type sent by non-allowlisted tech — ignored",
+        );
+        zoomBillableOverride = null;
+      }
     }
 
     // Idempotency guard. If the same client token has already been used
@@ -302,6 +328,7 @@ export async function registerTaskRoutes(app: FastifyInstance, config: AppConfig
       appLogin: session.app_login,
       comment,
       stockNotes,
+      zoomBillableOverride,
       photos: photoRows.map((r) => ({
         id: r.id,
         filename: r.filename,

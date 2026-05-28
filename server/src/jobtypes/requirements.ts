@@ -85,6 +85,13 @@ export const JOB_TYPE_REQUIREMENTS: Record<JobType, string[]> = {
   ],
   complaint: [],
   other: [],
+  // Zoom-billable overrides have no AI requirements check — they're
+  // tech-driven classifications, not AI-driven, and the billable
+  // nature of the job means we trust the tech's pick. Operator can
+  // add checklists here later if they want auditing of these jobs.
+  zoom_fibre_install: [],
+  zoom_ont_drop: [],
+  zoom_reinstall: [],
 };
 
 /** True if this job_type has any required items the AI should evaluate. */

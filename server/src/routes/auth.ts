@@ -134,10 +134,22 @@ export async function registerAuthRoutes(app: FastifyInstance, config: AppConfig
     const sid = req.cookies[sessionCookieName];
     const session = loadSession(db, sid);
     if (!session) return reply.code(401).send({ error: "unauthenticated" });
+    // Pull the Zoom-billable flag off the tech row (admins return
+    // false). Used by the tech-side submit form to decide whether
+    // to render the Zoom-billable type picker — clients that don't
+    // care about the field can ignore it.
+    let zoomBillable = false;
+    if (!session.is_admin) {
+      const techRow = db
+        .prepare(`SELECT zoom_billable FROM techs WHERE login = ?`)
+        .get(session.app_login) as { zoom_billable: number } | undefined;
+      zoomBillable = techRow?.zoom_billable === 1;
+    }
     return {
       app_login: session.app_login,
       splynx_admin_id: session.splynx_admin_id,
       is_admin: session.is_admin,
+      zoom_billable: zoomBillable,
     };
   });
 }

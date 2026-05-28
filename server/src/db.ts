@@ -232,6 +232,16 @@ function migrate(d: Database.Database): void {
     d.exec(`ALTER TABLE submissions ADD COLUMN stock_notes TEXT`);
   }
 
+  // 2026-05-28: per-tech "Zoom billable" allowlist. When 1, the tech
+  // sees an extra picker on the submit page to tag the job as one of
+  // three Zoom-billable types — that picker overrides the AI's
+  // job_type classification on the resulting submission. Other techs
+  // never see the picker. Default 0 on existing rows.
+  const techCols = cols("techs");
+  if (!techCols.has("zoom_billable")) {
+    d.exec(`ALTER TABLE techs ADD COLUMN zoom_billable INTEGER NOT NULL DEFAULT 0`);
+  }
+
   // 2026-05-27: client-generated idempotency token, persisted so a
   // retry of the same submit (e.g. lost response, tech re-taps) hits
   // a duplicate check before a second row is inserted. NULL when the

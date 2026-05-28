@@ -768,6 +768,7 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
     password: z.string().min(8).max(256),
     splynx_admin_id: z.coerce.number().int().positive(),
     display_name: z.string().min(1).max(120),
+    zoom_billable: z.boolean().optional(),
   });
 
   app.post("/admin/techs", { preHandler: requireAdmin }, async (req, reply) => {
@@ -798,6 +799,7 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
     splynx_admin_id: z.coerce.number().int().positive().optional(),
     display_name: z.string().min(1).max(120).optional(),
     is_active: z.boolean().optional(),
+    zoom_billable: z.boolean().optional(),
   });
 
   app.patch("/admin/techs/:id", { preHandler: requireAdmin }, async (req, reply) => {

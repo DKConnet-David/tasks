@@ -232,6 +232,11 @@ export async function summarize(args: SummarizeArgs): Promise<SummarizeResult> {
     issues_notes: { type: "array" as const, items: { type: "string" as const } },
     job_type: {
       type: "string" as const,
+      // Zoom-billable values are intentionally absent — the AI must
+      // never classify a job as Zoom-billable. Those values can only
+      // arrive via the tech-side override, which runs after this AI
+      // call returns. The JobType enum on the Zod side does include
+      // them so admin-edited / overridden submissions still validate.
       enum: [
         "ftua_installation",
         "site_survey",

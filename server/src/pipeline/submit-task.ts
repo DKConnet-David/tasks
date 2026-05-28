@@ -47,6 +47,13 @@ export interface PipelineArgs {
    * with codes preserved. Empty string when the tech didn't fill it.
    */
   stockNotes?: string;
+  /**
+   * Optional Zoom-billable job_type override sent by an allowlisted
+   * tech via the Zoom-billable picker on the submit form. When set,
+   * replaces summary.job_type after the AI summary lands. Permission
+   * is verified by the submit handler before reaching here.
+   */
+  zoomBillableOverride?: string | null;
   photos: PhotoForPipeline[];
   task: SplynxTaskRaw;
 }
@@ -148,6 +155,19 @@ export async function runSubmissionPipeline(args: PipelineArgs): Promise<Pipelin
   }
   summary = summaryResult.value.summary;
   const requirementsCheck = summaryResult.value.requirementsCheck;
+
+  // Tech-supplied Zoom-billable override replaces the AI's job_type
+  // classification before anything downstream sees it. The submit
+  // handler has already gated permission (tech.zoom_billable = 1),
+  // so reaching here means the override is legitimate.
+  if (args.zoomBillableOverride) {
+    log.info(
+      { submissionId, aiJobType: summary.job_type, override: args.zoomBillableOverride },
+      "applying zoom-billable job_type override",
+    );
+    summary.job_type = args.zoomBillableOverride as typeof summary.job_type;
+  }
+
   db.prepare(`UPDATE submissions SET summary_json = ?, updated_at = ? WHERE id = ?`).run(
     JSON.stringify(summary),
     Date.now(),

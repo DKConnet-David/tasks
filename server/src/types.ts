@@ -67,8 +67,28 @@ export const JobTypeSchema = z
     "voip_installation",
     "complaint",
     "other",
+    // Zoom-billable overrides. The AI never picks these — they are
+    // only ever set by an allowlisted tech via the Zoom-billable
+    // picker on the submit form. See ZOOM_BILLABLE_TYPES below.
+    "zoom_fibre_install",
+    "zoom_ont_drop",
+    "zoom_reinstall",
   ])
   .default("other");
+
+/**
+ * Closed set of job types an allowlisted tech (techs.zoom_billable = 1)
+ * can pick to override the AI's classification. Display labels mirror
+ * the operator-facing dropdown on the tech submit form and the admin
+ * dashboards. Kept here so the server-side validator + UI labels
+ * stay in lockstep.
+ */
+export const ZOOM_BILLABLE_TYPES = [
+  { value: "zoom_fibre_install", label: "Fibre Install" },
+  { value: "zoom_ont_drop", label: "ONT Drop" },
+  { value: "zoom_reinstall", label: "Zoom Reinstall" },
+] as const;
+export type ZoomBillableType = (typeof ZOOM_BILLABLE_TYPES)[number]["value"];
 export type JobType = z.infer<typeof JobTypeSchema>;
 
 /**

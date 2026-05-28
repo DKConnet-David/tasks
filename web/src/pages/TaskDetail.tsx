@@ -1,8 +1,19 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { ApiError, api } from "../api";
+import { useAuth } from "../auth";
 import { PhotoCapture, type CapturedPhoto } from "../components/PhotoCapture";
 import { SubmitProgress, type SubmitPhase } from "../components/SubmitProgress";
+
+type ZoomBillableType = "zoom_fibre_install" | "zoom_ont_drop" | "zoom_reinstall";
+
+// Closed list of Zoom-billable types. Mirrors ZOOM_BILLABLE_TYPES in
+// server/src/types.ts — keep in lockstep.
+const ZOOM_BILLABLE_TYPES: { value: ZoomBillableType; label: string }[] = [
+  { value: "zoom_fibre_install", label: "Fibre Install" },
+  { value: "zoom_ont_drop", label: "ONT Drop" },
+  { value: "zoom_reinstall", label: "Zoom Reinstall" },
+];
 
 interface SplynxTaskRaw {
   id: number;
@@ -79,6 +90,8 @@ export function TaskDetail() {
   const [uploadTotal, setUploadTotal] = useState(0);
   const [secondaryTechRoster, setSecondaryTechRoster] = useState<SecondaryTech[]>([]);
   const [selectedSecondaryIds, setSelectedSecondaryIds] = useState<number[]>([]);
+  const { me } = useAuth();
+  const [zoomBillableType, setZoomBillableType] = useState<ZoomBillableType | null>(null);
   // Idempotency token persists across retries of the same form instance
   // so a lost response on the first attempt doesn't create a duplicate
   // on the second. Regenerated only when the tech explicitly confirms a
@@ -147,6 +160,7 @@ export function TaskDetail() {
       if (selectedSecondaryIds.length > 0) {
         fd.append("secondary_tech_ids", selectedSecondaryIds.join(","));
       }
+      if (zoomBillableType) fd.append("zoom_billable_type", zoomBillableType);
       fd.append("idempotency_key", idempotencyKey.current);
       for (const p of photos) fd.append("photos", p.file, p.file.name || "photo.jpg");
 
@@ -293,6 +307,14 @@ export function TaskDetail() {
           />
         )}
 
+        {me?.zoom_billable && (
+          <ZoomBillableChips
+            selected={zoomBillableType}
+            onChange={setZoomBillableType}
+            disabled={submitting}
+          />
+        )}
+
         <label className="stack" style={{ gap: 4 }}>
           <span style={{ color: "var(--c-success)", fontWeight: 500 }}>
             Stock used (codes + items, one per line)
@@ -399,6 +421,45 @@ function DuplicateWarning({
         <button type="button" onClick={onConfirm}>
           Submit again anyway
         </button>
+      </div>
+    </div>
+  );
+}
+
+function ZoomBillableChips({
+  selected,
+  onChange,
+  disabled,
+}: {
+  selected: ZoomBillableType | null;
+  onChange: (next: ZoomBillableType | null) => void;
+  disabled: boolean;
+}) {
+  return (
+    <div className="stack" style={{ gap: 6 }}>
+      <span style={{ color: "var(--c-accent)", fontWeight: 500, fontSize: "0.9em" }}>
+        Zoom billable (overrides AI classification)
+      </span>
+      <div className="row" style={{ flexWrap: "wrap", gap: 6 }}>
+        {ZOOM_BILLABLE_TYPES.map((t) => {
+          const on = selected === t.value;
+          return (
+            <button
+              key={t.value}
+              type="button"
+              disabled={disabled}
+              onClick={() => onChange(on ? null : t.value)}
+              className={on ? "" : "secondary"}
+              style={{
+                padding: "6px 12px",
+                fontSize: "0.9em",
+                borderRadius: 999,
+              }}
+            >
+              {on ? "✓ " : ""}{t.label}
+            </button>
+          );
+        })}
       </div>
     </div>
   );

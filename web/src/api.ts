@@ -136,4 +136,7 @@ export interface Me {
   app_login: string;
   splynx_admin_id: number;
   is_admin: boolean;
+  // True only when an admin has flagged this tech as Zoom-billable.
+  // Drives the Zoom-billable type picker on the submit form.
+  zoom_billable: boolean;
 }
