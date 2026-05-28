@@ -188,11 +188,22 @@ export function TaskDetail() {
           setDuplicateInfo(e.body as DuplicateInfo);
         } else if (e.status === 413) {
           setSubmitError("Photos are too large — try fewer or smaller files.");
+        } else if (e.status === 0) {
+          // No response from the server — connection dropped, server
+          // restarted mid-upload, or the request was aborted. The
+          // idempotency token on this form instance means a retry is
+          // safe: if the upload actually landed server-side, the next
+          // attempt gets caught as a duplicate.
+          setSubmitError(
+            "Connection dropped before the server replied. Tap Submit again — if the job already landed, we'll catch the duplicate.",
+          );
         } else {
           setSubmitError(`Submit failed (${e.status}).`);
         }
       } else {
-        setSubmitError("Submit failed — network error.");
+        setSubmitError(
+          "Connection dropped before the server replied. Tap Submit again — if the job already landed, we'll catch the duplicate.",
+        );
       }
       setPhase("error");
     }
