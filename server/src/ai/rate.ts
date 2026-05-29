@@ -145,7 +145,27 @@ export async function ratePerformance(args: RateArgs): Promise<InternalRating> {
   if (!toolUse || toolUse.type !== "tool_use") {
     throw new Error("Claude did not return a tool_use block for rating");
   }
-  return InternalRatingSchema.parse(toolUse.input);
+  // Truncate strengths / improvements to the schema cap before parsing.
+  // The prompt + tool schema both ask for ≤5 items each, but Claude
+  // occasionally overshoots — without this guard the whole rating fails
+  // Zod validation and the submission lands as "partial". Truncating
+  // silently drops the bonus items so the rating still saves; we log
+  // when we had to truncate so calibration drift is visible.
+  const raw = toolUse.input as Record<string, unknown>;
+  const MAX_ITEMS = 5;
+  if (Array.isArray(raw.strengths) && raw.strengths.length > MAX_ITEMS) {
+    console.warn(
+      `[rate] truncating strengths from ${raw.strengths.length} to ${MAX_ITEMS} items`,
+    );
+    raw.strengths = raw.strengths.slice(0, MAX_ITEMS);
+  }
+  if (Array.isArray(raw.improvements) && raw.improvements.length > MAX_ITEMS) {
+    console.warn(
+      `[rate] truncating improvements from ${raw.improvements.length} to ${MAX_ITEMS} items`,
+    );
+    raw.improvements = raw.improvements.slice(0, MAX_ITEMS);
+  }
+  return InternalRatingSchema.parse(raw);
 }
 
 function buildFewShotBlock(db: Database.Database): string {
