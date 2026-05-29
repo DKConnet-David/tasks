@@ -66,6 +66,13 @@ interface RecentSubmission {
   // submission. Renders as a 🏷️ badge on the row; does NOT affect
   // the effective_score column.
   is_admin_flagged: boolean;
+  // Optional admin "what this should have scored" attached to the
+  // flag. Null when no flag, or when the flagger didn't set an
+  // adjustment. When non-null, the row's score cell shows the
+  // original effective_score struck through with the adjusted score
+  // rendered in red next to it. Page-level aggregates (overall
+  // score, dimensions) are NOT recalculated from this value.
+  admin_flag_score: number | null;
   headline: string | null;
 }
 
@@ -1350,11 +1357,43 @@ function RecentSubmissionsPanel({
               </td>
               <td style={{ padding: "8px 8px", textAlign: "right" }}>
                 {s.effective_score !== null ? (
-                  <span style={{ color: scoreColor(s.effective_score) }}>
-                    {s.effective_score}
-                    {s.is_admin_override && (
+                  <span
+                    title={
+                      s.admin_flag_score !== null
+                        ? `Admin flag adjusted this from ${s.effective_score} to ${s.admin_flag_score}. Page totals still use the original score.`
+                        : undefined
+                    }
+                  >
+                    <span
+                      style={{
+                        color: scoreColor(s.effective_score),
+                        textDecoration: s.admin_flag_score !== null ? "line-through" : undefined,
+                        opacity: s.admin_flag_score !== null ? 0.55 : 1,
+                      }}
+                    >
+                      {s.effective_score}
+                    </span>
+                    {s.admin_flag_score !== null && (
+                      <span
+                        style={{
+                          color: "var(--c-danger)",
+                          fontWeight: 600,
+                          marginLeft: 6,
+                        }}
+                      >
+                        {s.admin_flag_score}
+                      </span>
+                    )}
+                    {s.is_admin_override && s.admin_flag_score === null && (
                       <span className="muted" style={{ fontSize: "0.8em" }}> (admin)</span>
                     )}
+                  </span>
+                ) : s.admin_flag_score !== null ? (
+                  <span
+                    style={{ color: "var(--c-danger)", fontWeight: 600 }}
+                    title="Admin flag adjusted score (no AI / admin score on this submission)."
+                  >
+                    {s.admin_flag_score}
                   </span>
                 ) : (
                   <span className="muted">—</span>

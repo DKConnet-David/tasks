@@ -172,6 +172,11 @@ interface SubmissionForListing {
   // is_admin_override and never affecting effective_score). Surfaced
   // as a badge on the TechProfile submissions list.
   is_admin_flagged: boolean;
+  // Optional "what the admin thinks this should have scored" attached
+  // to the flag. Null when no flag, or when the flagger didn't set an
+  // adjustment. Used for the strikethrough-and-red display only —
+  // dashboards' aggregates still use effective_score above.
+  admin_flag_score: number | null;
   headline: string | null;
 }
 
@@ -424,7 +429,7 @@ export async function registerPerformanceRoutes(
         .prepare(
           `SELECT s.id, s.task_id, s.app_login, s.source, s.status, s.created_at,
                   s.summary_json, s.corrected_summary_json,
-                  s.admin_flagged_at,
+                  s.admin_flagged_at, s.admin_flag_score,
                   r.ai_score, r.admin_score,
                   r.ai_dimensions_json, r.admin_dimensions_json
            FROM submissions s
@@ -438,6 +443,7 @@ export async function registerPerformanceRoutes(
           summary_json: string | null;
           corrected_summary_json: string | null;
           admin_flagged_at: number | null;
+          admin_flag_score: number | null;
         }
       >;
 
@@ -563,6 +569,7 @@ export async function registerPerformanceRoutes(
           effective_score: score,
           is_admin_override: row.admin_score !== null,
           is_admin_flagged: row.admin_flagged_at !== null,
+          admin_flag_score: row.admin_flag_score,
           headline,
         });
       }
