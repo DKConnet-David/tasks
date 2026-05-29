@@ -168,6 +168,10 @@ interface SubmissionForListing {
   job_type: string | null;
   effective_score: number | null;
   is_admin_override: boolean;
+  // True when an admin has applied a tracking flag (independent of
+  // is_admin_override and never affecting effective_score). Surfaced
+  // as a badge on the TechProfile submissions list.
+  is_admin_flagged: boolean;
   headline: string | null;
 }
 
@@ -420,6 +424,7 @@ export async function registerPerformanceRoutes(
         .prepare(
           `SELECT s.id, s.task_id, s.app_login, s.source, s.status, s.created_at,
                   s.summary_json, s.corrected_summary_json,
+                  s.admin_flagged_at,
                   r.ai_score, r.admin_score,
                   r.ai_dimensions_json, r.admin_dimensions_json
            FROM submissions s
@@ -432,6 +437,7 @@ export async function registerPerformanceRoutes(
         Omit<SubmissionRow, "job_type"> & {
           summary_json: string | null;
           corrected_summary_json: string | null;
+          admin_flagged_at: number | null;
         }
       >;
 
@@ -443,6 +449,7 @@ export async function registerPerformanceRoutes(
           available_months: availableMonths,
           job_count: 0,
           late_submissions: 0,
+          flagged_count: 0,
           overall_score: null,
           dimensions: null,
           consistency: null,
@@ -467,6 +474,7 @@ export async function registerPerformanceRoutes(
       let scoreSum = 0;
       let scoreCount = 0;
       let lateCount = 0;
+      let flaggedCount = 0;
       const dimSum: DimensionScores = {
         workmanship: 0,
         photo_quality: 0,
@@ -497,6 +505,7 @@ export async function registerPerformanceRoutes(
 
       for (const row of rows) {
         if (isLate(row.created_at)) lateCount += 1;
+        if (row.admin_flagged_at !== null) flaggedCount += 1;
         const score = row.admin_score ?? row.ai_score;
         const dims = parseDims(row.admin_dimensions_json) ?? parseDims(row.ai_dimensions_json);
 
@@ -553,6 +562,7 @@ export async function registerPerformanceRoutes(
           job_type: jobType,
           effective_score: score,
           is_admin_override: row.admin_score !== null,
+          is_admin_flagged: row.admin_flagged_at !== null,
           headline,
         });
       }
@@ -609,6 +619,7 @@ export async function registerPerformanceRoutes(
         available_months: availableMonths,
         job_count: rows.length,
         late_submissions: lateCount,
+        flagged_count: flaggedCount,
         overall_score: overall,
         dimensions,
         consistency,

@@ -62,6 +62,10 @@ interface RecentSubmission {
   job_type: string | null;
   effective_score: number | null;
   is_admin_override: boolean;
+  // Set true when an admin has applied a tracking flag to this
+  // submission. Renders as a 🏷️ badge on the row; does NOT affect
+  // the effective_score column.
+  is_admin_flagged: boolean;
   headline: string | null;
 }
 
@@ -72,6 +76,10 @@ interface ProfileResponse {
   available_months: string[];
   job_count: number;
   late_submissions: number;
+  // Count of submissions in the selected period that an admin has
+  // flagged for tracking. Drives the "N flagged" chip on the Header
+  // panel.
+  flagged_count: number;
   overall_score: number | null;
   dimensions: Dimensions | null;
   consistency: {
@@ -195,7 +203,18 @@ function Header({
       }}
     >
       <div>
-        <h1 style={{ margin: 0 }}>{data.login}</h1>
+        <div className="row" style={{ alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <h1 style={{ margin: 0 }}>{data.login}</h1>
+          {data.flagged_count > 0 && (
+            <span
+              className="badge warn"
+              title="Admin-flagged submissions in this period — see the 🏷️ badges in the Submissions list below"
+              style={{ fontSize: "0.7em" }}
+            >
+              🏷️ {data.flagged_count} flagged
+            </span>
+          )}
+        </div>
         <div className="muted" style={{ fontSize: "0.9em" }}>
           {data.job_count} job{data.job_count === 1 ? "" : "s"} · {data.period_label}
         </div>
@@ -1317,7 +1336,18 @@ function RecentSubmissionsPanel({
               </td>
               <td style={{ padding: "8px 8px" }}>#{s.task_id}</td>
               <td style={{ padding: "8px 8px" }}>{s.job_type ? prettyType(s.job_type) : "—"}</td>
-              <td style={{ padding: "8px 8px" }}>{s.headline ?? <span className="muted">—</span>}</td>
+              <td style={{ padding: "8px 8px" }}>
+                {s.is_admin_flagged && (
+                  <span
+                    className="badge warn"
+                    title="Admin flagged this submission for tracking — open it to read the note"
+                    style={{ marginRight: 6, fontSize: "0.75em" }}
+                  >
+                    🏷️
+                  </span>
+                )}
+                {s.headline ?? <span className="muted">—</span>}
+              </td>
               <td style={{ padding: "8px 8px", textAlign: "right" }}>
                 {s.effective_score !== null ? (
                   <span style={{ color: scoreColor(s.effective_score) }}>

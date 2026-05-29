@@ -71,6 +71,13 @@ interface RequirementsCheckResponse {
   items: RequirementsItem[];
 }
 
+interface AdminFlag {
+  note: string;
+  score: number | null;
+  flagged_at: number;
+  flagged_by: string | null;
+}
+
 interface DetailResponse {
   submission: Submission;
   photos: Photo[];
@@ -82,6 +89,9 @@ interface DetailResponse {
   // at submit time, when there's no checklist for the job type, or on
   // legacy submissions.
   requirements_check: RequirementsCheckResponse | null;
+  // Admin tracking flag — null when not flagged. Annotation only, never
+  // affects effective_score on dashboards.
+  admin_flag: AdminFlag | null;
 }
 
 interface Summary {
@@ -141,6 +151,13 @@ export function SubmissionDetail() {
   const [adminRationaleDraft, setAdminRationaleDraft] = useState<string>("");
   const [adminDimsDraft, setAdminDimsDraft] = useState<Record<string, number> | null>(null);
 
+  // Admin tracking flag (separate from the rating override above).
+  // Annotates a submission with a note + optional adjusted score for
+  // pattern-spotting on the tech's performance profile. Never feeds
+  // into effective_score.
+  const [flagNoteDraft, setFlagNoteDraft] = useState<string>("");
+  const [flagScoreDraft, setFlagScoreDraft] = useState<number | null>(null);
+
   // Photo lightbox: null = closed, number = current photo index in photos[].
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
 
@@ -152,6 +169,10 @@ export function SubmissionDetail() {
       const sum = currentSummary(d.submission);
       setSummaryDraft(sum);
       setTechCommentDraft(d.submission.tech_comment_override ?? d.submission.comment ?? "");
+      // Hydrate the flag draft fields from the saved flag so the
+      // textarea + buttons show the current state ready for edit.
+      setFlagNoteDraft(d.admin_flag?.note ?? "");
+      setFlagScoreDraft(d.admin_flag?.score ?? null);
       setError(null);
     } catch (e) {
       setError(e instanceof ApiError ? `Load failed (${e.status})` : "Network error");
@@ -324,6 +345,46 @@ export function SubmissionDetail() {
       await loadAll();
     } catch (e) {
       setError(e instanceof ApiError ? `Rating save failed (${e.status})` : "Network error");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function saveFlag() {
+    if (!id) return;
+    if (!flagNoteDraft.trim()) {
+      setError("Flag note can't be empty.");
+      return;
+    }
+    setBusy("flag");
+    setError(null);
+    try {
+      await api.post(`/admin/submissions/${id}/flag`, {
+        note: flagNoteDraft.trim(),
+        score: flagScoreDraft ?? undefined,
+      });
+      setOkMessage("Flag saved. It shows on the tech's profile but doesn't change the effective score.");
+      await loadAll();
+    } catch (e) {
+      setError(e instanceof ApiError ? `Flag save failed (${e.status})` : "Network error");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function clearFlag() {
+    if (!id) return;
+    if (!confirm("Remove this flag from the submission? The note will be lost.")) return;
+    setBusy("flag");
+    setError(null);
+    try {
+      await api.delete(`/admin/submissions/${id}/flag`);
+      setOkMessage("Flag cleared.");
+      setFlagNoteDraft("");
+      setFlagScoreDraft(null);
+      await loadAll();
+    } catch (e) {
+      setError(e instanceof ApiError ? `Flag clear failed (${e.status})` : "Network error");
     } finally {
       setBusy(null);
     }
@@ -768,6 +829,102 @@ export function SubmissionDetail() {
           </div>
         </div>
       )}
+
+      {/* Admin tracking flag — separate from the rating override above.
+          Never affects effective_score on dashboards; surfaces as a
+          badge on the tech's profile so the operator can spot
+          mistake-patterns over time. */}
+      <div
+        className="panel stack"
+        style={{ border: "2px dashed var(--c-warn)" }}
+      >
+        <div className="row" style={{ justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+          <h2 style={{ margin: 0 }}>
+            🏷️ Admin flag
+            <span className="muted" style={{ fontSize: "0.55em", marginLeft: 8 }}>
+              tracking only — does NOT change the AI's effective score
+            </span>
+          </h2>
+          <span className="badge warn">admin-only</span>
+        </div>
+        <p className="muted" style={{ margin: 0, fontSize: "0.9em" }}>
+          Flag a submission to mark "this tech made a mistake here". The note
+          is internal; the optional adjusted score is for record-keeping. The
+          submission gets a 🏷️ badge on the tech's profile so patterns are
+          easy to spot during reviews. The AI rating and effective score on
+          dashboards are unchanged.
+        </p>
+        {data.admin_flag && (
+          <div
+            style={{
+              padding: "6px 10px",
+              background: "rgba(227, 179, 65, 0.12)",
+              border: "1px solid rgba(227, 179, 65, 0.4)",
+              borderRadius: "var(--r)",
+              fontSize: "0.85em",
+            }}
+          >
+            Flagged by <strong>{data.admin_flag.flagged_by ?? "(unknown)"}</strong>{" "}
+            on {new Date(data.admin_flag.flagged_at).toLocaleString()}
+            {data.admin_flag.score !== null && (
+              <> · adjusted score: <strong>{data.admin_flag.score}</strong></>
+            )}
+          </div>
+        )}
+        <label className="stack" style={{ gap: 4 }}>
+          <span className="muted">Internal note (required)</span>
+          <textarea
+            value={flagNoteDraft}
+            onChange={(e) => setFlagNoteDraft(e.target.value)}
+            placeholder="e.g. Forgot the cable labelling on a standards-critical install"
+            rows={3}
+            maxLength={2000}
+          />
+        </label>
+        <div className="stack" style={{ gap: 4 }}>
+          <span className="muted">Adjusted score for tracking (optional, 1-10)</span>
+          <div className="row" style={{ gap: 4, flexWrap: "wrap" }}>
+            {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => (
+              <button
+                key={n}
+                onClick={() => setFlagScoreDraft(flagScoreDraft === n ? null : n)}
+                className={flagScoreDraft === n ? "" : "secondary"}
+                style={{ padding: "4px 10px", minWidth: 36 }}
+                type="button"
+              >
+                {n}
+              </button>
+            ))}
+            {flagScoreDraft !== null && (
+              <button
+                onClick={() => setFlagScoreDraft(null)}
+                className="secondary"
+                style={{ padding: "4px 10px", fontSize: "0.85em" }}
+                type="button"
+              >
+                Clear score
+              </button>
+            )}
+          </div>
+        </div>
+        <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+          <button
+            onClick={saveFlag}
+            disabled={busy === "flag" || !flagNoteDraft.trim()}
+          >
+            {busy === "flag" ? "Saving…" : data.admin_flag ? "Update flag" : "Save flag"}
+          </button>
+          {data.admin_flag && (
+            <button
+              onClick={clearFlag}
+              disabled={busy === "flag"}
+              className="secondary"
+            >
+              Clear flag
+            </button>
+          )}
+        </div>
+      </div>
 
       {/* Audit log */}
       {actions.length > 0 && (

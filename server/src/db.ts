@@ -232,6 +232,30 @@ function migrate(d: Database.Database): void {
     d.exec(`ALTER TABLE submissions ADD COLUMN stock_notes TEXT`);
   }
 
+  // 2026-05-29: admin "tracking flag" annotation on a submission.
+  // Independent of the existing admin_score override (which still
+  // replaces the AI's effective score on dashboards) — this flag is
+  // purely a marker + note for performance-review patterns. None of
+  // these columns ever feed into effective_score math. Partial index
+  // makes the "count flagged per tech in a period" query cheap.
+  if (!subCols.has("admin_flag_note")) {
+    d.exec(`ALTER TABLE submissions ADD COLUMN admin_flag_note TEXT`);
+  }
+  if (!subCols.has("admin_flag_score")) {
+    d.exec(`ALTER TABLE submissions ADD COLUMN admin_flag_score INTEGER`);
+  }
+  if (!subCols.has("admin_flagged_at")) {
+    d.exec(`ALTER TABLE submissions ADD COLUMN admin_flagged_at INTEGER`);
+  }
+  if (!subCols.has("admin_flagged_by")) {
+    d.exec(`ALTER TABLE submissions ADD COLUMN admin_flagged_by TEXT`);
+  }
+  d.exec(
+    `CREATE INDEX IF NOT EXISTS idx_submissions_flagged
+       ON submissions(app_login, admin_flagged_at)
+       WHERE admin_flagged_at IS NOT NULL`,
+  );
+
   // 2026-05-28: per-tech "Zoom billable" allowlist. When 1, the tech
   // sees an extra picker on the submit page to tag the job as one of
   // three Zoom-billable types — that picker overrides the AI's

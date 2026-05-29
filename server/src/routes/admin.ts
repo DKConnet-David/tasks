@@ -139,6 +139,7 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
                 summary_json, corrected_summary_json, splynx_comment_id, splynx_corrected_comment_id,
                 splynx_pdf_file_id, wa_message_id, status, error, admin_resolved, hidden,
                 requirements_check_json, stock_notes,
+                admin_flag_note, admin_flag_score, admin_flagged_at, admin_flagged_by,
                 created_at, updated_at
          FROM submissions WHERE id = ?`,
       )
@@ -163,6 +164,10 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
           hidden: number;
           requirements_check_json: string | null;
           stock_notes: string | null;
+          admin_flag_note: string | null;
+          admin_flag_score: number | null;
+          admin_flagged_at: number | null;
+          admin_flagged_by: string | null;
           created_at: number;
           updated_at: number;
         }
@@ -223,6 +228,17 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
       // Admin-only requirements-coverage check (null when the toggle was
       // off at submit time, or when there's no checklist for this job_type).
       requirements_check: requirementsCheck,
+      // Admin tracking flag — null when not flagged. Does NOT affect
+      // the submission's effective_score on dashboards; it's a marker
+      // + note surfaced as a badge on the tech's profile.
+      admin_flag: sub.admin_flagged_at
+        ? {
+            note: sub.admin_flag_note ?? "",
+            score: sub.admin_flag_score,
+            flagged_at: sub.admin_flagged_at,
+            flagged_by: sub.admin_flagged_by,
+          }
+        : null,
     };
   });
 
@@ -1219,6 +1235,76 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
         ...params,
       );
       recordAdminAction(db, id, req.session?.app_login ?? null, "edit_rating", { ...parsed.data });
+      return { ok: true };
+    },
+  );
+
+  // ---------- ADMIN TRACKING FLAG (separate from the rating override) ----------
+  // The rating override above replaces the AI's effective score on
+  // dashboards. The flag below is purely an annotation — it lives on
+  // the submissions row, never feeds into score math, and surfaces
+  // as a badge in the per-tech profile so the operator can spot
+  // mistake patterns without rewriting the AI's evaluation.
+  const FlagPostSchema = z.object({
+    note: z.string().trim().min(1).max(2000),
+    score: z.number().int().min(1).max(10).optional(),
+  });
+  app.post(
+    "/admin/submissions/:id/flag",
+    { preHandler: requireAdmin },
+    async (req, reply) => {
+      const id = parseId((req.params as { id: string }).id);
+      if (id === null) return reply.code(400).send({ error: "invalid_id" });
+      const parsed = FlagPostSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return reply.code(400).send({ error: "invalid_body", issues: parsed.error.issues });
+      }
+      const sub = loadSubmission(db, id);
+      if (!sub) return reply.code(404).send({ error: "not_found" });
+      const actor = req.session?.app_login ?? null;
+      const now = Date.now();
+      db.prepare(
+        `UPDATE submissions
+           SET admin_flag_note = ?,
+               admin_flag_score = ?,
+               admin_flagged_at = ?,
+               admin_flagged_by = ?,
+               updated_at = ?
+         WHERE id = ?`,
+      ).run(
+        parsed.data.note,
+        parsed.data.score ?? null,
+        now,
+        actor,
+        now,
+        id,
+      );
+      recordAdminAction(db, id, actor, "flag_submission", {
+        note: parsed.data.note.slice(0, 200),
+        score: parsed.data.score ?? null,
+      });
+      return { ok: true, flagged_at: now };
+    },
+  );
+
+  app.delete(
+    "/admin/submissions/:id/flag",
+    { preHandler: requireAdmin },
+    async (req, reply) => {
+      const id = parseId((req.params as { id: string }).id);
+      if (id === null) return reply.code(400).send({ error: "invalid_id" });
+      const sub = loadSubmission(db, id);
+      if (!sub) return reply.code(404).send({ error: "not_found" });
+      db.prepare(
+        `UPDATE submissions
+           SET admin_flag_note = NULL,
+               admin_flag_score = NULL,
+               admin_flagged_at = NULL,
+               admin_flagged_by = NULL,
+               updated_at = ?
+         WHERE id = ?`,
+      ).run(Date.now(), id);
+      recordAdminAction(db, id, req.session?.app_login ?? null, "unflag_submission", null);
       return { ok: true };
     },
   );
