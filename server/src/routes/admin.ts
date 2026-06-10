@@ -11,6 +11,8 @@ import {
   JobTypeSchema,
   RatingDimensionsSchema,
   RequirementsCheckSchema,
+  ZOOM_BILLABLE_TYPES,
+  type ZoomBillableType,
 } from "../types.js";
 import { summarize } from "../ai/summarize.js";
 import { pipelineSendDocument } from "./whatsapp.js";
@@ -644,6 +646,13 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
   );
 
   // ---------- MANUAL SUBMISSION (admin-initiated, full pipeline) ----------
+  // Mirrors the tech-side submit form: same multipart shape (photos,
+  // comment, stock_notes, secondary_tech_ids, zoom_billable_type,
+  // idempotency_key) plus admin-only fields:
+  //   - on_behalf_of_login / on_behalf_of_admin_id → attribution
+  //   - submission_created_at → backdate the submission timestamp
+  //   - job_start_time / job_end_time → override the AI's Overview
+  //     start/end times (drives Splynx comment + PDF + WhatsApp)
   app.post("/admin/submissions/manual", { preHandler: requireAdmin }, async (req, reply) => {
     if (!req.isMultipart()) return reply.code(400).send({ error: "expected_multipart" });
     if (!isSplynxConfigured(config)) return reply.code(503).send({ error: "splynx_not_configured" });
@@ -651,8 +660,15 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
 
     let taskId: number | null = null;
     let comment = "";
+    let stockNotes = "";
+    let secondaryTechIdsRaw = "";
+    let zoomBillableOverride: ZoomBillableType | null = null;
+    let idempotencyKey = "";
     let onBehalfOfLogin: string | null = null;
     let onBehalfOfAdminId: number | null = null;
+    let submissionCreatedAtRaw = "";
+    let jobStartTimeOverride = "";
+    let jobEndTimeOverride = "";
     const photos: SourcePhoto[] = [];
 
     try {
@@ -660,10 +676,27 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
         if (part.type === "field") {
           if (part.fieldname === "task_id") taskId = Number.parseInt(String(part.value), 10);
           else if (part.fieldname === "comment") comment = String(part.value).slice(0, 4000);
-          else if (part.fieldname === "on_behalf_of_login")
+          else if (part.fieldname === "stock_notes")
+            stockNotes = String(part.value).slice(0, 2000);
+          else if (part.fieldname === "secondary_tech_ids")
+            secondaryTechIdsRaw = String(part.value);
+          else if (part.fieldname === "zoom_billable_type") {
+            const raw = String(part.value);
+            const match = ZOOM_BILLABLE_TYPES.find((t) => t.value === raw);
+            if (match) zoomBillableOverride = match.value;
+          } else if (part.fieldname === "idempotency_key") {
+            const raw = String(part.value).slice(0, 100);
+            if (/^[\x21-\x7E]{1,100}$/.test(raw)) idempotencyKey = raw;
+          } else if (part.fieldname === "on_behalf_of_login")
             onBehalfOfLogin = String(part.value).slice(0, 64);
           else if (part.fieldname === "on_behalf_of_admin_id")
             onBehalfOfAdminId = Number.parseInt(String(part.value), 10);
+          else if (part.fieldname === "submission_created_at")
+            submissionCreatedAtRaw = String(part.value);
+          else if (part.fieldname === "job_start_time")
+            jobStartTimeOverride = String(part.value).slice(0, 20);
+          else if (part.fieldname === "job_end_time")
+            jobEndTimeOverride = String(part.value).slice(0, 20);
         } else if (part.type === "file" && part.fieldname === "photos") {
           if (!part.mimetype.startsWith("image/")) {
             await part.toBuffer();
@@ -691,15 +724,121 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
         ? onBehalfOfAdminId
         : session.splynx_admin_id;
 
-    const now = Date.now();
+    // Validate submission_created_at backdate. Must parse, must be
+    // ≤ now (no future-dating), and ≥ 1 year ago (sanity cap). When
+    // invalid we silently fall back to Date.now() — the rest of the
+    // form is fine; only the timestamp override is dropped.
+    const nowMs = Date.now();
+    let createdAt = nowMs;
+    if (submissionCreatedAtRaw) {
+      const parsed = Number(submissionCreatedAtRaw);
+      const oneYearAgo = nowMs - 365 * 24 * 60 * 60 * 1000;
+      if (Number.isFinite(parsed) && parsed <= nowMs && parsed >= oneYearAgo) {
+        createdAt = parsed;
+      } else {
+        req.log.warn(
+          { raw: submissionCreatedAtRaw },
+          "manual submit: submission_created_at out of range — ignoring",
+        );
+      }
+    }
+
+    // Zoom-billable permission check: only the targeted tech's flag
+    // matters. If the tech isn't allowlisted, silently drop the
+    // override (mirrors the tech-side handler's permission check).
+    if (zoomBillableOverride) {
+      const tech = db
+        .prepare(`SELECT zoom_billable FROM techs WHERE login = ?`)
+        .get(recordedLogin) as { zoom_billable: number } | undefined;
+      if (tech?.zoom_billable !== 1) {
+        req.log.warn(
+          { recordedLogin, attempted: zoomBillableOverride },
+          "manual submit: zoom_billable_type set for non-allowlisted tech — dropping",
+        );
+        zoomBillableOverride = null;
+      }
+    }
+
+    // Normalise the time-of-day overrides to HH:MM (24h). Accept
+    // "HH:MM" or "H:MM" — anything else gets dropped and the AI's
+    // value wins on the resulting Overview.
+    const normalisedStart = normaliseTimeOfDay(jobStartTimeOverride);
+    const normalisedEnd = normaliseTimeOfDay(jobEndTimeOverride);
+
+    // Idempotency guard: identical to tech-side. Scoped by
+    // recordedLogin so two admins entering different jobs for the
+    // same tech don't collide.
+    if (idempotencyKey) {
+      const existing = db
+        .prepare(
+          `SELECT id, task_id, status, created_at, splynx_comment_id
+           FROM submissions
+           WHERE app_login = ? AND idempotency_key = ?
+           ORDER BY id DESC
+           LIMIT 1`,
+        )
+        .get(recordedLogin, idempotencyKey) as
+        | {
+            id: number;
+            task_id: number;
+            status: string;
+            created_at: number;
+            splynx_comment_id: number | null;
+          }
+        | undefined;
+      if (existing) {
+        return reply.code(409).send({
+          error: "duplicate_submission",
+          existing_submission_id: existing.id,
+          existing_task_id: existing.task_id,
+          existing_created_at: existing.created_at,
+          existing_status: existing.status,
+          splynx_comment_posted: existing.splynx_comment_id !== null,
+        });
+      }
+    }
+
     const insert = db
       .prepare(
         `INSERT INTO submissions
-           (task_id, app_login, splynx_admin_id, source, comment, status, created_at, updated_at)
-         VALUES (?, ?, ?, 'manual', ?, 'pending', ?, ?)`,
+           (task_id, app_login, splynx_admin_id, source, comment, status,
+            idempotency_key, created_at, updated_at)
+         VALUES (?, ?, ?, 'manual', ?, 'pending', ?, ?, ?)`,
       )
-      .run(taskId, recordedLogin, recordedAdminId, comment, now, now);
+      .run(
+        taskId,
+        recordedLogin,
+        recordedAdminId,
+        comment,
+        idempotencyKey || null,
+        createdAt,
+        createdAt,
+      );
     const submissionId = Number(insert.lastInsertRowid);
+
+    if (stockNotes.trim()) {
+      db.prepare(
+        `UPDATE submissions SET stock_notes = ?, updated_at = ? WHERE id = ?`,
+      ).run(stockNotes, Date.now(), submissionId);
+    }
+
+    // Secondary-tech tags: same parsing + INSERT OR IGNORE pattern
+    // as the tech submit. Inactive ids are filtered by the
+    // sub-select on the join INSERT.
+    const secondaryTechIds = secondaryTechIdsRaw
+      .split(",")
+      .map((s) => Number.parseInt(s.trim(), 10))
+      .filter((n) => Number.isFinite(n) && n > 0);
+    if (secondaryTechIds.length > 0) {
+      const insertTag = db.prepare(
+        `INSERT OR IGNORE INTO submission_secondary_techs (submission_id, secondary_tech_id)
+         SELECT ?, id FROM secondary_techs WHERE id = ? AND is_active = 1`,
+      );
+      const tx = db.transaction((ids: number[]) => {
+        for (const id of ids) insertTag.run(submissionId, id);
+      });
+      tx(secondaryTechIds);
+    }
 
     const insertPhoto = db.prepare(
       `INSERT INTO submission_photos (submission_id, filename, size_bytes, width, height, created_at)
@@ -749,6 +888,13 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
       splynxAdminId: recordedAdminId,
       appLogin: recordedLogin,
       comment,
+      stockNotes,
+      zoomBillableOverride,
+      submittedAtOverride: createdAt !== nowMs ? new Date(createdAt) : undefined,
+      overviewTimeOverride:
+        normalisedStart || normalisedEnd
+          ? { start: normalisedStart, end: normalisedEnd }
+          : undefined,
       photos: photoRows.map((r) => ({
         id: r.id,
         filename: r.filename,
@@ -762,6 +908,8 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
     recordAdminAction(db, submissionId, req.session?.app_login ?? null, "manual_submit", {
       onBehalfOfLogin: recordedLogin,
       photosSaved: savedCount,
+      backdated: createdAt !== nowMs,
+      overviewTimeOverridden: !!(normalisedStart || normalisedEnd),
     });
 
     return reply.code(201).send({
@@ -1369,6 +1517,40 @@ function recordAdminAction(
     `INSERT INTO admin_actions (submission_id, actor_login, action, details_json, created_at)
      VALUES (?, ?, ?, ?, ?)`,
   ).run(submissionId, actorLogin, action, JSON.stringify(details ?? null), Date.now());
+}
+
+/**
+ * Normalise a free-form time-of-day string into "HH:MM" (24h).
+ * Accepts "09:10", "9:10", "9:10am", "13:45", "1:45pm". Returns
+ * "" when the input can't be parsed — caller treats empty as "use
+ * the AI's value instead". Server-side gate for the Manual entry
+ * Overview-time overrides.
+ */
+function normaliseTimeOfDay(raw: string): string {
+  if (!raw) return "";
+  const trimmed = raw.trim().toLowerCase().replace(/\s+/g, "");
+  const m = /^(\d{1,2}):(\d{2})\s*(am|pm)?$/.exec(trimmed);
+  if (!m) return "";
+  let h = Number.parseInt(m[1]!, 10);
+  const min = Number.parseInt(m[2]!, 10);
+  const ampm = m[3];
+  if (!Number.isFinite(h) || !Number.isFinite(min)) return "";
+  if (min < 0 || min > 59) return "";
+  if (ampm === "am") {
+    if (h === 12) h = 0;
+    else if (h < 1 || h > 12) return "";
+  } else if (ampm === "pm") {
+    if (h === 12) {
+      // 12pm stays 12
+    } else if (h >= 1 && h <= 11) {
+      h += 12;
+    } else {
+      return "";
+    }
+  } else {
+    if (h < 0 || h > 23) return "";
+  }
+  return `${String(h).padStart(2, "0")}:${String(min).padStart(2, "0")}`;
 }
 
 function parseId(s: string): number | null {

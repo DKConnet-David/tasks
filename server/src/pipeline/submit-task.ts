@@ -54,6 +54,21 @@ export interface PipelineArgs {
    * is verified by the submit handler before reaching here.
    */
   zoomBillableOverride?: string | null;
+  /**
+   * Optional override for the "submitted at" timestamp used in the
+   * WhatsApp caption and PDF footer. Used by the manual-submission
+   * path when an admin backdates an entry; the submissions row's
+   * created_at column is set separately. Defaults to `new Date()`.
+   */
+  submittedAtOverride?: Date;
+  /**
+   * Optional overrides for the Job Start / End times on the Overview
+   * block. Each is "HH:MM" 24h (already normalised by the manual
+   * submit endpoint). When non-empty, replaces what the AI extracted
+   * from job-card photos AFTER the AI returns but BEFORE the summary
+   * is persisted. If both are present, job_duration is recomputed.
+   */
+  overviewTimeOverride?: { start?: string; end?: string };
   photos: PhotoForPipeline[];
   task: SplynxTaskRaw;
 }
@@ -168,6 +183,24 @@ export async function runSubmissionPipeline(args: PipelineArgs): Promise<Pipelin
     summary.job_type = args.zoomBillableOverride as typeof summary.job_type;
   }
 
+  // Admin-supplied Overview time override (Manual entry only). Replaces
+  // what the AI extracted from job-card photos with the times the admin
+  // typed in, so the Splynx comment / PDF / WhatsApp overview reflect
+  // the real on-site times. Both ends → recompute job_duration.
+  if (args.overviewTimeOverride?.start || args.overviewTimeOverride?.end) {
+    const startOverride = args.overviewTimeOverride.start ?? "";
+    const endOverride = args.overviewTimeOverride.end ?? "";
+    if (startOverride) summary.overview.job_start_time = startOverride;
+    if (endOverride) summary.overview.job_end_time = endOverride;
+    if (startOverride && endOverride) {
+      summary.overview.job_duration = computeDurationLabel(startOverride, endOverride);
+    }
+    log.info(
+      { submissionId, start: startOverride, end: endOverride },
+      "applying overview-time override",
+    );
+  }
+
   db.prepare(`UPDATE submissions SET summary_json = ?, updated_at = ? WHERE id = ?`).run(
     JSON.stringify(summary),
     Date.now(),
@@ -208,7 +241,7 @@ export async function runSubmissionPipeline(args: PipelineArgs): Promise<Pipelin
       comment,
       photos: photoData.map(({ buffer, width, height }) => ({ buffer, width, height })),
       techName: appLogin,
-      submittedAt: new Date(),
+      submittedAt: args.submittedAtOverride ?? new Date(),
       secondaryTechNames,
     });
     const pdfDir = path.join(config.DATA_DIR, "photos", String(taskId), String(submissionId));
@@ -288,8 +321,10 @@ export async function runSubmissionPipeline(args: PipelineArgs): Promise<Pipelin
         customerLogin,
         // Pipeline runs immediately after the submission row is inserted,
         // so "now" tracks submission.created_at within ~1s — close enough
-        // for an HH:MM display.
-        new Date(),
+        // for an HH:MM display. Manual submissions pass an explicit
+        // override (the backdated timestamp the admin picked) so the
+        // caption reflects when the work actually happened.
+        args.submittedAtOverride ?? new Date(),
         secondaryTechNames,
       );
       const fileName = `task-${taskId}-submission-${submissionId}.pdf`;
@@ -332,6 +367,35 @@ export async function runSubmissionPipeline(args: PipelineArgs): Promise<Pipelin
     whatsappMessageId,
     errors,
   };
+}
+
+/**
+ * Compute a "Xh Ymin" / "Xh" / "Ymin" duration label from two
+ * "HH:MM" times. Both inputs are assumed already normalised by the
+ * Manual entry handler. Crossing midnight is treated as the end
+ * being on the next day. Returns "" on malformed input — caller
+ * will leave job_duration as whatever the AI produced.
+ */
+function computeDurationLabel(startHHMM: string, endHHMM: string): string {
+  const parse = (s: string): number | null => {
+    const m = /^(\d{2}):(\d{2})$/.exec(s);
+    if (!m) return null;
+    const h = Number(m[1]);
+    const mm = Number(m[2]);
+    if (!Number.isFinite(h) || !Number.isFinite(mm)) return null;
+    return h * 60 + mm;
+  };
+  const s = parse(startHHMM);
+  const e = parse(endHHMM);
+  if (s === null || e === null) return "";
+  let diff = e - s;
+  if (diff < 0) diff += 24 * 60; // crossed midnight
+  if (diff === 0) return "0min";
+  const hours = Math.floor(diff / 60);
+  const mins = diff % 60;
+  if (hours === 0) return `${mins}min`;
+  if (mins === 0) return `${hours}h`;
+  return `${hours}h ${mins}min`;
 }
 
 function persistRating(
