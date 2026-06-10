@@ -46,11 +46,13 @@ Tone everywhere: plain South African English. Factual, direct. No emoji. No mark
 
 You MUST call the save_summary tool. Fields:
 
-SHORT (for WhatsApp caption + Splynx comment text):
+SHORT (for WhatsApp caption + Splynx comment text — these are read at a glance, keep them PUNCHY):
 - headline: ≤80 chars, single sentence summarising the outcome (e.g. "Wireless install completed at Theodore Arendse, Hopefield").
-- what_was_done: 2–4 sentences of prose covering the actual work performed.
-- observations: site conditions, customer requests, etc. Empty string if none.
-- follow_ups: action items / billing notes / things needing attention. Empty string if none.
+- what_was_done: 1–2 short sentences, ≤30 words TOTAL. Plain English summary of the actual work. No technical readings (dBm, Mbps, CINR, channels) — those belong in materials / issues_notes. If the work is multi-step, name the headline action only ("Swapped 12V PSU for the required 24V; client back online.").
+- observations: 1–2 short sentences, ≤30 words TOTAL. Only what the office actually needs to know about the site / customer / outcome that isn't already obvious from the headline. Skip diagnostic numbers — those go in materials / issues_notes. Empty string if there's nothing notable.
+- follow_ups: 1–2 short sentences OR ≤30 words TOTAL across short bullets. Only action items the office must do (bill, schedule, confirm). Empty string if everything is closed.
+
+The verbose technical readings (signal levels, speed-test numbers, CINR, noise floor, SSIDs, channels, IPs, MACs) MUST be pushed into materials and/or issues_notes arrays — never into observations or what_was_done. The PDF renders those arrays as bullet lists where they read well; the Splynx comment + WhatsApp caption use the short prose fields where the numbers turn into a wall of text.
 
 STRUCTURED (drive the PDF report):
 - overview: an object with service_type, client_name, location, job_date, job_start_time, job_end_time, job_duration.
@@ -401,6 +403,33 @@ export async function summarize(args: SummarizeArgs): Promise<SummarizeResult> {
   // any drift or future regressions. See docs/plan for context.
   scrubFabricatedTimes(parsed.overview, args.task);
 
+  // Length cap for the three short prose fields. The prompt asks for
+  // ≤30 words on each; this is the safety net for when the AI runs
+  // long. Truncates at the nearest word boundary and appends an
+  // ellipsis. Logs which fields fired so prompt drift is visible.
+  const SHORT_FIELD_MAX_WORDS = 35;
+  const truncs: string[] = [];
+  const trWhat = truncateWords(parsed.what_was_done, SHORT_FIELD_MAX_WORDS);
+  if (trWhat.truncated) {
+    parsed.what_was_done = trWhat.value;
+    truncs.push("what_was_done");
+  }
+  const trObs = truncateWords(parsed.observations, SHORT_FIELD_MAX_WORDS);
+  if (trObs.truncated) {
+    parsed.observations = trObs.value;
+    truncs.push("observations");
+  }
+  const trFollow = truncateWords(parsed.follow_ups, SHORT_FIELD_MAX_WORDS);
+  if (trFollow.truncated) {
+    parsed.follow_ups = trFollow.value;
+    truncs.push("follow_ups");
+  }
+  if (truncs.length > 0) {
+    console.warn(
+      `[summarize] truncated long short-field(s) for task ${args.task.id}: ${truncs.join(", ")}`,
+    );
+  }
+
   // When the toggle is on, parse the requirements_check sibling. If the
   // model omitted it or it fails schema we just store null and log — we
   // never want a malformed requirements check to fail the whole summary.
@@ -515,6 +544,28 @@ function coerceMalformedSummary(raw: Record<string, unknown>): ExternalSummary {
     headline: "Summary recovered from malformed AI response",
     what_was_done: "(See verbatim tech notes — AI summary could not be parsed)",
   });
+}
+
+/**
+ * Slice a free-text field to at most `maxWords` whitespace-delimited
+ * tokens, appending an ellipsis when truncation fires. Empty / short
+ * inputs pass through untouched. Returns the result + a truncated
+ * flag so the caller can log when the safety net activates.
+ *
+ * "Word" here is just whitespace-split; we don't try to be smart about
+ * punctuation. The visible result reads as a sentence cut mid-thought,
+ * which is fine — the goal is to keep Splynx + WhatsApp prose tight,
+ * not to produce perfect copy.
+ */
+function truncateWords(
+  s: string,
+  maxWords: number,
+): { value: string; truncated: boolean } {
+  const trimmed = (s ?? "").trim();
+  if (!trimmed) return { value: trimmed, truncated: false };
+  const words = trimmed.split(/\s+/);
+  if (words.length <= maxWords) return { value: trimmed, truncated: false };
+  return { value: words.slice(0, maxWords).join(" ") + "…", truncated: true };
 }
 
 function scrubFabricatedTimes(
