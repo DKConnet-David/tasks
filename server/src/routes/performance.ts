@@ -551,8 +551,25 @@ export async function registerPerformanceRoutes(
         // output. Fall back to summary_json if there's no correction.
         const summarySource = row.corrected_summary_json ?? row.summary_json;
         const summary = summarySource ? safeParse(summarySource) : null;
-        const jobType = (summary as { job_type?: string } | null)?.job_type ?? "other";
-        const headline = (summary as { headline?: string } | null)?.headline ?? null;
+        const summaryObj = summary as {
+          headline?: string;
+          job_type?: string;
+          overview?: { location?: string };
+        } | null;
+        const jobType = summaryObj?.job_type ?? "other";
+        const proseHeadline = summaryObj?.headline ?? null;
+        // Zoom-billable job_types render in the Submissions list with
+        // the bare address instead of the AI's "Zoom Fibre install
+        // completed at {address}" prose, since the Type column already
+        // names the job kind. The stored summary_json is unchanged —
+        // Splynx, WhatsApp, and PDF still get the prose headline. Fall
+        // back to the prose headline when overview.location is empty
+        // (legacy submissions whose AI extraction missed it).
+        const location = summaryObj?.overview?.location?.trim() ?? "";
+        const headline =
+          (jobType === "zoom_fibre_install" || jobType === "zoom_ont_drop") && location
+            ? location
+            : proseHeadline;
 
         jobTypeCounts[jobType] = (jobTypeCounts[jobType] ?? 0) + 1;
         if (score !== null) {
