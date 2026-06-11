@@ -1108,6 +1108,46 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
     },
   );
 
+  // ---------- RATING MODEL OVERRIDE (Opus ↔ Sonnet A/B) ----------
+  // Lets the operator pick which Claude model the per-submission
+  // Quality rating call uses. Summarize and every other AI call
+  // ignore this setting — only ratePerformance reads it.
+  app.get(
+    "/admin/settings/rating-model",
+    { preHandler: requireAdmin },
+    async () => {
+      return {
+        value: getSetting(db, SettingKeys.ratingModelOverride) ?? "",
+      };
+    },
+  );
+
+  // Closed enum for the toggle — empty string means "use server
+  // default". Any future model can be added here without a code
+  // change to rate.ts.
+  const RatingModelSettingSchema = z.object({
+    value: z.enum(["", "opus", "sonnet"]),
+  });
+  app.patch(
+    "/admin/settings/rating-model",
+    { preHandler: requireAdmin },
+    async (req, reply) => {
+      const parsed = RatingModelSettingSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return reply.code(400).send({ error: "invalid_body", issues: parsed.error.issues });
+      }
+      const prev = getSetting(db, SettingKeys.ratingModelOverride) ?? "";
+      setSetting(db, SettingKeys.ratingModelOverride, parsed.data.value);
+      // Audit log via Fastify only — admin_actions is per-submission,
+      // and this setting toggle isn't scoped to any single submission.
+      req.log.info(
+        { actor: req.session?.app_login ?? null, from: prev, to: parsed.data.value },
+        "rating_model_override toggled",
+      );
+      return { ok: true, value: parsed.data.value };
+    },
+  );
+
   // ---------- DAILY SUMMARY (scheduled 19:00 WhatsApp post) ----------
   app.get(
     "/admin/settings/daily-summary",

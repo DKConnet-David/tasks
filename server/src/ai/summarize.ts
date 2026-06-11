@@ -199,9 +199,36 @@ export async function summarize(args: SummarizeArgs): Promise<SummarizeResult> {
   // When the requirements check is on we tack the checklist block onto the
   // system prompt and add `requirements_check` to the tool input_schema so
   // the model fills it in the same tool_use response.
-  const systemPrompt = reqCheckOn
-    ? `${SYSTEM_PROMPT}\n\n${buildRequirementsPromptBlock()}`
-    : SYSTEM_PROMPT;
+  //
+  // System is passed as a block array so we can attach Anthropic prompt-
+  // cache markers (cache_control: ephemeral) to the static prefix. The
+  // base SYSTEM_PROMPT is large + identical across submissions and benefits
+  // most. The requirements-check block (when on) is also deterministic and
+  // gets its own cache breakpoint, so toggling the requirements feature
+  // doesn't invalidate the base cache. Retry's per-call corrective nudge
+  // is added at the call site below and stays UNCACHED.
+  //
+  // We type the array as a wider shape because the installed SDK
+  // (@anthropic-ai/sdk ^0.30.0) predates the typed `cache_control` field.
+  // The API on the wire accepts it; once the SDK is bumped these casts
+  // drop in favour of Anthropic.TextBlockParam[] directly.
+  type CachedTextBlock = Anthropic.TextBlockParam & {
+    cache_control?: { type: "ephemeral" };
+  };
+  const baseSystemBlocks: CachedTextBlock[] = [
+    {
+      type: "text",
+      text: SYSTEM_PROMPT,
+      cache_control: { type: "ephemeral" },
+    },
+  ];
+  if (reqCheckOn) {
+    baseSystemBlocks.push({
+      type: "text",
+      text: buildRequirementsPromptBlock(),
+      cache_control: { type: "ephemeral" },
+    });
+  }
   const baseProperties = {
     headline: { type: "string" as const },
     what_was_done: { type: "string" as const },
@@ -311,18 +338,30 @@ export async function summarize(args: SummarizeArgs): Promise<SummarizeResult> {
     | { ok: true; parsed: ExternalSummary; raw: Record<string, unknown> }
     | { ok: false; issues: z.ZodIssue[]; raw: Record<string, unknown> }
   > {
-    const sys = extraSystem ? `${systemPrompt}\n\n${extraSystem}` : systemPrompt;
+    // Compose system: cached base + (optional) uncached corrective
+    // nudge for the retry path. The corrective text varies per call, so
+    // it must come AFTER the cache breakpoints to avoid invalidating
+    // the cached prefix on retry.
+    const sys: CachedTextBlock[] = extraSystem
+      ? [...baseSystemBlocks, { type: "text", text: extraSystem }]
+      : baseSystemBlocks;
+    const toolWithCache = {
+      name: "save_summary",
+      description: "Save the structured job summary.",
+      input_schema: toolInputSchema,
+      // Cache the tool schema alongside the system prefix. Tools
+      // render at position 0 in the cache prefix, so changing this
+      // schema invalidates the system cache too — keep both stable.
+      cache_control: { type: "ephemeral" as const },
+    };
     const r = await client.messages.create({
       model: args.config.CLAUDE_MODEL,
       max_tokens: 8192,
-      system: sys,
-      tools: [
-        {
-          name: "save_summary",
-          description: "Save the structured job summary.",
-          input_schema: toolInputSchema,
-        },
-      ],
+      // SDK ^0.30.0's typed surface predates prompt-caching fields; casts
+      // bridge the gap. The wire API accepts these fields on every model
+      // that supports prompt caching (Opus 4.6/4.7, Sonnet 4.6, etc.).
+      system: sys as unknown as string,
+      tools: [toolWithCache as unknown as Anthropic.Tool],
       tool_choice: { type: "tool", name: "save_summary" },
       messages: [
         {
@@ -331,6 +370,23 @@ export async function summarize(args: SummarizeArgs): Promise<SummarizeResult> {
         },
       ],
     });
+    // Surface cache hit/miss to container logs so we can confirm the
+    // cache is actually firing in production. Zero `cacheRead` across
+    // back-to-back submissions within 5 minutes = a silent invalidator
+    // somewhere in the prefix. Usage cache fields are also pre-typed-
+    // surface on this SDK version, hence the cast.
+    const usage = r.usage as unknown as {
+      input_tokens: number;
+      output_tokens: number;
+      cache_read_input_tokens?: number;
+      cache_creation_input_tokens?: number;
+    };
+    console.info(
+      `[summarize] ai_usage task=${args.task.id} ` +
+        `cacheRead=${usage.cache_read_input_tokens ?? 0} ` +
+        `cacheCreate=${usage.cache_creation_input_tokens ?? 0} ` +
+        `input=${usage.input_tokens} output=${usage.output_tokens}`,
+    );
     const tu = r.content.find((c) => c.type === "tool_use");
     if (!tu || tu.type !== "tool_use") {
       throw new Error("Claude did not return a tool_use block");

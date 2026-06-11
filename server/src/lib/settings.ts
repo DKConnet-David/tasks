@@ -36,4 +36,12 @@ export const SettingKeys = {
   // sent the daily summary. Prevents double-sends across container
   // restarts and the once-a-minute interval check.
   dailySummaryLastSentDate: "daily_summary_last_sent_date",
+  // Override the model used by the per-submission Quality rating call.
+  // "" / absent → use config.CLAUDE_MODEL (currently Opus). "sonnet" →
+  // claude-sonnet-4-6. Any other non-empty value is treated as a
+  // literal model id (future-proofing for Haiku tests). Summarize and
+  // every other AI call ignore this setting — only ratePerformance
+  // reads it. Lets the operator A/B rating quality vs cost without
+  // a redeploy.
+  ratingModelOverride: "rating_model_override",
 } as const;

@@ -3,6 +3,7 @@ import type Database from "better-sqlite3";
 import type { AppConfig } from "../config.js";
 import { InternalRatingSchema, type InternalRating } from "../types.js";
 import type { SplynxTaskRaw } from "../splynx/types.js";
+import { getSetting, SettingKeys } from "../lib/settings.js";
 
 /**
  * Rate the quality of a completed field-tech job.
@@ -79,8 +80,32 @@ export async function ratePerformance(args: RateArgs): Promise<InternalRating> {
     },
   }));
 
+  // System is a block array so the static SYSTEM_PROMPT and the
+  // semi-static few-shot calibration block each get their own Anthropic
+  // prompt-cache breakpoint. The few-shot block changes only when an
+  // admin saves a rating override — rare in the 5-minute cache window —
+  // so the second breakpoint preserves the first's cache even when the
+  // few-shot does change. Per-submission task details stay in the user
+  // turn (uncached).
+  type CachedTextBlock = Anthropic.TextBlockParam & {
+    cache_control?: { type: "ephemeral" };
+  };
+  const systemBlocks: CachedTextBlock[] = [
+    {
+      type: "text",
+      text: SYSTEM_PROMPT,
+      cache_control: { type: "ephemeral" },
+    },
+  ];
+  if (fewShot) {
+    systemBlocks.push({
+      type: "text",
+      text: fewShot,
+      cache_control: { type: "ephemeral" },
+    });
+  }
+
   const userText = [
-    fewShot ? `${fewShot}\n\n--- New job to rate ---\n` : "",
     `Task: ${args.task.title}`,
     `Site: ${args.task.address || "(not set)"}`,
     `Technician: ${args.techName}`,
@@ -91,47 +116,61 @@ export async function ratePerformance(args: RateArgs): Promise<InternalRating> {
     cleanDescription || "(empty)",
     "",
     `Now rate the work using save_rating.`,
-  ]
-    .filter(Boolean)
-    .join("\n");
+  ].join("\n");
 
-  const response = await client.messages.create({
-    model: args.config.CLAUDE_MODEL,
-    max_tokens: 800,
-    system: SYSTEM_PROMPT,
-    tools: [
-      {
-        name: "save_rating",
-        description: "Persist the internal quality rating.",
-        input_schema: {
+  // Pick the model: setting override > server default. Lets the
+  // operator A/B Opus vs Sonnet on rating quality without a redeploy.
+  // Any non-"sonnet"/"opus" value is forwarded verbatim so future
+  // tests (e.g. Haiku) work without a code change.
+  const override = getSetting(args.db, SettingKeys.ratingModelOverride);
+  const ratingModel =
+    override === "sonnet"
+      ? "claude-sonnet-4-6"
+      : override && override !== "opus"
+        ? override
+        : args.config.CLAUDE_MODEL;
+
+  const toolWithCache = {
+    name: "save_rating",
+    description: "Persist the internal quality rating.",
+    input_schema: {
+      type: "object",
+      properties: {
+        score: { type: "integer", minimum: 1, maximum: 10 },
+        strengths: {
+          type: "array",
+          maxItems: 5,
+          items: { type: "string" },
+        },
+        improvements: {
+          type: "array",
+          maxItems: 5,
+          items: { type: "string" },
+        },
+        dimensions: {
           type: "object",
           properties: {
-            score: { type: "integer", minimum: 1, maximum: 10 },
-            strengths: {
-              type: "array",
-              maxItems: 5,
-              items: { type: "string" },
-            },
-            improvements: {
-              type: "array",
-              maxItems: 5,
-              items: { type: "string" },
-            },
-            dimensions: {
-              type: "object",
-              properties: {
-                workmanship: { type: "integer", minimum: 1, maximum: 10 },
-                photo_quality: { type: "integer", minimum: 1, maximum: 10 },
-                completeness: { type: "integer", minimum: 1, maximum: 10 },
-                communication: { type: "integer", minimum: 1, maximum: 10 },
-              },
-              required: ["workmanship", "photo_quality", "completeness", "communication"],
-            },
+            workmanship: { type: "integer", minimum: 1, maximum: 10 },
+            photo_quality: { type: "integer", minimum: 1, maximum: 10 },
+            completeness: { type: "integer", minimum: 1, maximum: 10 },
+            communication: { type: "integer", minimum: 1, maximum: 10 },
           },
-          required: ["score", "strengths", "improvements", "dimensions"],
+          required: ["workmanship", "photo_quality", "completeness", "communication"],
         },
       },
-    ],
+      required: ["score", "strengths", "improvements", "dimensions"],
+    },
+    cache_control: { type: "ephemeral" as const },
+  };
+
+  const response = await client.messages.create({
+    model: ratingModel,
+    max_tokens: 800,
+    // SDK ^0.30.0's typed surface predates prompt-caching fields; casts
+    // bridge the gap. The wire API accepts these fields on Opus 4.6/4.7
+    // and Sonnet 4.6 (the rating model targets).
+    system: systemBlocks as unknown as string,
+    tools: [toolWithCache as unknown as Anthropic.Tool],
     tool_choice: { type: "tool", name: "save_rating" },
     messages: [
       {
@@ -140,6 +179,20 @@ export async function ratePerformance(args: RateArgs): Promise<InternalRating> {
       },
     ],
   });
+  // Surface cache hit/miss + which model handled the call (so a
+  // sudden cost shift after a setting flip is easy to attribute).
+  const usage = response.usage as unknown as {
+    input_tokens: number;
+    output_tokens: number;
+    cache_read_input_tokens?: number;
+    cache_creation_input_tokens?: number;
+  };
+  console.info(
+    `[rate] ai_usage task=${args.task.id} model=${ratingModel} ` +
+      `cacheRead=${usage.cache_read_input_tokens ?? 0} ` +
+      `cacheCreate=${usage.cache_creation_input_tokens ?? 0} ` +
+      `input=${usage.input_tokens} output=${usage.output_tokens}`,
+  );
 
   const toolUse = response.content.find((c) => c.type === "tool_use");
   if (!toolUse || toolUse.type !== "tool_use") {

@@ -15,7 +15,92 @@ export function Settings() {
       </div>
 
       <RequirementsCheckSection />
+      <RatingModelSection />
       <DailySummarySection />
+    </div>
+  );
+}
+
+type RatingModel = "" | "opus" | "sonnet";
+
+function RatingModelSection() {
+  const [value, setValue] = useState<RatingModel | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [okMessage, setOkMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    api
+      .get<{ value: RatingModel }>("/admin/settings/rating-model")
+      .then((r) => setValue(r.value))
+      .catch((e: unknown) => {
+        setError(e instanceof ApiError ? `Load failed (${e.status})` : "Network error");
+      });
+  }, []);
+
+  async function pick(next: RatingModel) {
+    if (next === value) return;
+    setBusy(true);
+    setError(null);
+    setOkMessage(null);
+    try {
+      await api.patch("/admin/settings/rating-model", { value: next });
+      setValue(next);
+      setOkMessage(
+        next === "sonnet"
+          ? "Rating switched to Sonnet 4.6. New submissions will be rated by Sonnet (~5× cheaper)."
+          : next === "opus"
+            ? "Rating pinned to Opus. New submissions will be rated by Opus regardless of the server default."
+            : "Rating reverted to the server default (Opus).",
+      );
+    } catch (e) {
+      setError(e instanceof ApiError ? `Update failed (${e.status})` : "Network error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const options: { value: RatingModel; label: string; sub: string }[] = [
+    { value: "", label: "Default (Opus)", sub: "uses the server default model" },
+    { value: "opus", label: "Opus", sub: "explicit pin — survives a default change" },
+    { value: "sonnet", label: "Sonnet", sub: "~5× cheaper per rating" },
+  ];
+
+  return (
+    <div className="panel stack">
+      <div className="row" style={{ justifyContent: "space-between", alignItems: "flex-start", gap: 16 }}>
+        <div style={{ flex: 1 }}>
+          <h3 style={{ margin: 0 }}>Quality rating model</h3>
+          <p className="muted" style={{ margin: "4px 0 0", fontSize: "0.9em" }}>
+            Picks which Claude model handles the per-submission Quality rating call.
+            Summarize, requirements check, patterns, and every other AI call keep
+            using the server default — only the rating call is affected. Use this to
+            A/B Sonnet against Opus on rating quality. Existing submissions are not
+            re-rated; the toggle only applies to new submissions going forward.
+          </p>
+        </div>
+        <div style={{ flexShrink: 0, display: "flex", flexDirection: "column", gap: 6 }}>
+          {value === null ? (
+            <span className="muted">Loading…</span>
+          ) : (
+            options.map((opt) => (
+              <button
+                key={opt.value || "default"}
+                onClick={() => pick(opt.value)}
+                disabled={busy}
+                className={value === opt.value ? "" : "secondary"}
+                style={{ minWidth: 180, textAlign: "left" }}
+                title={opt.sub}
+              >
+                {value === opt.value ? "● " : "○ "}
+                {opt.label}
+              </button>
+            ))
+          )}
+        </div>
+      </div>
+      {okMessage && <div className="success">{okMessage}</div>}
+      {error && <div className="danger">{error}</div>}
     </div>
   );
 }
