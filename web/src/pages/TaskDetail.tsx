@@ -9,10 +9,19 @@ type ZoomBillableType = "zoom_fibre_install" | "zoom_ont_drop" | "zoom_reinstall
 
 // Closed list of Zoom-billable types. Mirrors ZOOM_BILLABLE_TYPES in
 // server/src/types.ts — keep in lockstep.
-const ZOOM_BILLABLE_TYPES: { value: ZoomBillableType; label: string }[] = [
+// `disabled` flags retired options: the chip still renders (so the
+// category stays discoverable in the UI) but taps are ignored. The
+// server enum keeps every value valid so historical submissions still
+// parse; only new tech-side tagging is blocked. Admin Manual Entry's
+// picker has its own list and is intentionally NOT gated the same way.
+const ZOOM_BILLABLE_TYPES: {
+  value: ZoomBillableType;
+  label: string;
+  disabled?: boolean;
+}[] = [
   { value: "zoom_fibre_install", label: "Fibre Install" },
   { value: "zoom_ont_drop", label: "ONT Drop" },
-  { value: "zoom_reinstall", label: "Zoom Reinstall" },
+  { value: "zoom_reinstall", label: "Zoom Reinstall", disabled: true },
 ];
 
 interface SplynxTaskRaw {
@@ -456,18 +465,29 @@ function ZoomBillableChips({
       <div className="row" style={{ flexWrap: "wrap", gap: 6 }}>
         {ZOOM_BILLABLE_TYPES.map((t) => {
           const on = selected === t.value;
+          // Per-entry `disabled` (retired option) OR the form-level
+          // disabled during submit — either one greys the chip and
+          // suppresses taps. Native <button disabled> handles pointer
+          // events; the extra opacity/cursor makes the retirement
+          // visually obvious next to the still-active chips.
+          const retired = t.disabled === true;
+          const isDisabled = disabled || retired;
           return (
             <button
               key={t.value}
               type="button"
-              disabled={disabled}
+              disabled={isDisabled}
               onClick={() => onChange(on ? null : t.value)}
               className={on ? "" : "secondary"}
               style={{
                 padding: "6px 12px",
                 fontSize: "0.9em",
                 borderRadius: 999,
+                ...(retired
+                  ? { opacity: 0.4, cursor: "not-allowed" }
+                  : {}),
               }}
+              title={retired ? "Retired — no longer used" : undefined}
             >
               {on ? "✓ " : ""}{t.label}
             </button>
