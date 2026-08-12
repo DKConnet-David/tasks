@@ -10,6 +10,11 @@ interface WaStatus {
   groups: { id: string; subject: string }[];
   configured_jid: string | null;
   configured_name: string | null;
+  // Secondary group for Zoom-billable submissions. Optional — when
+  // set, Zoom-billable jobs also post here in addition to the
+  // primary group above.
+  zoom_configured_jid: string | null;
+  zoom_configured_name: string | null;
   started_at: number | null;
 }
 
@@ -83,6 +88,38 @@ export function WhatsAppPanel() {
       await api.delete("/admin/whatsapp/group");
       await load();
       setOkMessage("Target group cleared.");
+    } catch (e: unknown) {
+      setError(e instanceof ApiError ? `Failed (${e.status})` : "Network error");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  // Secondary "Zoom-billable" group — same endpoints as the primary,
+  // routed at /admin/whatsapp/zoom-group.
+  async function selectZoomGroup(jid: string, subject: string) {
+    setBusy(`select-zoom-${jid}`);
+    setError(null);
+    setOkMessage(null);
+    try {
+      await api.post("/admin/whatsapp/zoom-group", { jid, subject });
+      await load();
+      setOkMessage(`Zoom-billable target set to "${subject}".`);
+    } catch (e: unknown) {
+      setError(e instanceof ApiError ? `Failed (${e.status})` : "Network error");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function clearZoomGroup() {
+    setBusy("clear-zoom");
+    setError(null);
+    setOkMessage(null);
+    try {
+      await api.delete("/admin/whatsapp/zoom-group");
+      await load();
+      setOkMessage("Zoom-billable target cleared.");
     } catch (e: unknown) {
       setError(e instanceof ApiError ? `Failed (${e.status})` : "Network error");
     } finally {
@@ -179,7 +216,10 @@ export function WhatsAppPanel() {
       {data.status === "open" && (
         <>
           <div className="panel stack">
-            <h3 style={{ margin: 0 }}>Target group</h3>
+            <h3 style={{ margin: 0 }}>Primary target group</h3>
+            <p className="muted" style={{ margin: 0, fontSize: "0.85em" }}>
+              Every job summary the pipeline sends goes here.
+            </p>
             {data.configured_jid ? (
               <div className="stack">
                 <div>
@@ -197,9 +237,36 @@ export function WhatsAppPanel() {
               </div>
             ) : (
               <p className="muted">
-                No group selected yet. Pick one below — it'll be the destination for every job
-                summary the pipeline sends.
+                No group selected yet. Pick one below.
               </p>
+            )}
+          </div>
+
+          <div className="panel stack">
+            <h3 style={{ margin: 0 }}>Zoom-billable target group</h3>
+            <p className="muted" style={{ margin: 0, fontSize: "0.85em" }}>
+              Optional second group. When set, submissions tagged as Fibre Install / ONT Drop /
+              Zoom Reinstall are also posted here in addition to the primary group. Leave clear
+              to skip the second delivery.
+            </p>
+            {data.zoom_configured_jid ? (
+              <div className="stack">
+                <div>
+                  <strong>{data.zoom_configured_name ?? "(unnamed)"}</strong>{" "}
+                  <span className="muted">— {data.zoom_configured_jid}</span>
+                </div>
+                <div className="row" style={{ gap: 8 }}>
+                  <button
+                    className="secondary"
+                    onClick={clearZoomGroup}
+                    disabled={busy === "clear-zoom"}
+                  >
+                    Clear zoom target
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <p className="muted">No Zoom-billable target set.</p>
             )}
           </div>
 
@@ -210,24 +277,42 @@ export function WhatsAppPanel() {
             ) : (
               <div className="stack">
                 {data.groups.map((g) => {
-                  const isCurrent = g.id === data.configured_jid;
+                  const isPrimary = g.id === data.configured_jid;
+                  const isZoom = g.id === data.zoom_configured_jid;
                   return (
                     <div
                       key={g.id}
                       className="row"
-                      style={{ justifyContent: "space-between", alignItems: "center" }}
+                      style={{
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        flexWrap: "wrap",
+                        gap: 8,
+                      }}
                     >
-                      <div>
+                      <div style={{ minWidth: 0, flex: 1 }}>
                         <strong>{g.subject}</strong>
                         <div className="muted" style={{ fontSize: "0.8em" }}>{g.id}</div>
                       </div>
-                      <button
-                        className={isCurrent ? "secondary" : ""}
-                        onClick={() => selectGroup(g.id, g.subject)}
-                        disabled={busy === `select-${g.id}` || isCurrent}
-                      >
-                        {isCurrent ? "Selected" : "Set as target"}
-                      </button>
+                      <div className="row" style={{ gap: 4, flexWrap: "wrap" }}>
+                        <button
+                          className={isPrimary ? "secondary" : ""}
+                          onClick={() => selectGroup(g.id, g.subject)}
+                          disabled={busy === `select-${g.id}` || isPrimary}
+                          style={{ padding: "4px 10px", fontSize: "0.85em" }}
+                        >
+                          {isPrimary ? "✓ Primary" : "Set as primary"}
+                        </button>
+                        <button
+                          className={isZoom ? "secondary" : ""}
+                          onClick={() => selectZoomGroup(g.id, g.subject)}
+                          disabled={busy === `select-zoom-${g.id}` || isZoom}
+                          style={{ padding: "4px 10px", fontSize: "0.85em" }}
+                          title="Second group for Zoom-billable submissions only"
+                        >
+                          {isZoom ? "✓ Zoom" : "Set as Zoom"}
+                        </button>
+                      </div>
                     </div>
                   );
                 })}

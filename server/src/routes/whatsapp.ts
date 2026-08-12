@@ -30,6 +30,8 @@ export async function registerWhatsAppRoutes(app: FastifyInstance, config: AppCo
     const s = getStatus();
     const groupJid = getSetting(db, SettingKeys.whatsappGroupJid);
     const groupName = getSetting(db, SettingKeys.whatsappGroupName);
+    const zoomJid = getSetting(db, SettingKeys.whatsappZoomGroupJid);
+    const zoomName = getSetting(db, SettingKeys.whatsappZoomGroupName);
     return {
       status: s.status,
       qr_data_url: s.qrDataUrl,
@@ -37,6 +39,11 @@ export async function registerWhatsAppRoutes(app: FastifyInstance, config: AppCo
       groups: s.groups,
       configured_jid: groupJid,
       configured_name: groupName,
+      // Secondary group for Zoom-billable submissions. Optional — when
+      // set, Zoom-billable jobs are also posted there in addition to
+      // the primary group above.
+      zoom_configured_jid: zoomJid,
+      zoom_configured_name: zoomName,
       started_at: s.startedAt,
     };
   });
@@ -67,6 +74,24 @@ export async function registerWhatsAppRoutes(app: FastifyInstance, config: AppCo
     return { ok: true };
   });
 
+  // Secondary "Zoom-billable" target group. Same shape as the
+  // primary group endpoints, just writes to a separate setting.
+  app.post("/admin/whatsapp/zoom-group", { preHandler: requireAdmin }, async (req, reply) => {
+    const parsed = SetGroupSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_body" });
+    setSetting(db, SettingKeys.whatsappZoomGroupJid, parsed.data.jid);
+    if (parsed.data.subject) {
+      setSetting(db, SettingKeys.whatsappZoomGroupName, parsed.data.subject);
+    }
+    return { ok: true, jid: parsed.data.jid };
+  });
+
+  app.delete("/admin/whatsapp/zoom-group", { preHandler: requireAdmin }, async () => {
+    deleteSetting(db, SettingKeys.whatsappZoomGroupJid);
+    deleteSetting(db, SettingKeys.whatsappZoomGroupName);
+    return { ok: true };
+  });
+
   app.post("/admin/whatsapp/test", { preHandler: requireAdmin }, async (req, reply) => {
     const jid = getSetting(db, SettingKeys.whatsappGroupJid);
     if (!jid) {
@@ -94,14 +119,20 @@ export async function registerWhatsAppRoutes(app: FastifyInstance, config: AppCo
 
 // Surface a thin send wrapper for the pipeline (no auth — pipeline runs in
 // the api process). Keeps the pipeline import surface clean.
+//
+// `jidOverride` bypasses the primary-group setting lookup so the caller
+// can send to a specific group directly. Used by the dual-send path for
+// Zoom-billable submissions (second delivery to the zoom-group JID).
+// Returns null when no JID is available (setting unset + no override).
 export async function pipelineSendDocument(args: {
   config: AppConfig;
   caption: string;
   pdfBuffer: Buffer;
   fileName: string;
+  jidOverride?: string;
 }): Promise<{ messageId: string | null; jid: string } | null> {
   const db = getDb(args.config.DATA_DIR);
-  const jid = getSetting(db, SettingKeys.whatsappGroupJid);
+  const jid = args.jidOverride ?? getSetting(db, SettingKeys.whatsappGroupJid);
   if (!jid) return null;
   const messageId = await sendDocumentToGroup({
     jid,

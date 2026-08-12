@@ -346,6 +346,46 @@ export async function runSubmissionPipeline(args: PipelineArgs): Promise<Pipelin
         }
         log.info({ submissionId, jid: result.jid, whatsappMessageId }, "WhatsApp sent");
       }
+
+      // Second delivery for Zoom-billable submissions (Fibre Install /
+      // ONT Drop / Zoom Reinstall). Same caption + PDF, sent to the
+      // separately-configured zoom group. Non-fatal on either front:
+      // if the zoom group isn't configured we log a warning and move on
+      // (per operator's soft-fallback preference); if it is configured
+      // but the send fails, we push to errors so the submission lands
+      // as "partial" and the operator can retry via resend-WhatsApp.
+      const isZoomBillable = summary.job_type.startsWith("zoom_");
+      if (isZoomBillable) {
+        const zoomJid = getSetting(db, SettingKeys.whatsappZoomGroupJid);
+        if (!zoomJid) {
+          log.warn(
+            { submissionId, jobType: summary.job_type },
+            "Zoom-billable submission but no zoom group configured — skipping second send",
+          );
+        } else {
+          try {
+            const zoomResult = await pipelineSendDocument({
+              config,
+              caption,
+              pdfBuffer,
+              fileName,
+              jidOverride: zoomJid,
+            });
+            log.info(
+              {
+                submissionId,
+                jid: zoomJid,
+                zoomMessageId: zoomResult?.messageId ?? null,
+              },
+              "WhatsApp sent to Zoom group",
+            );
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            log.error({ err, jid: zoomJid }, "Zoom-group WhatsApp send failed");
+            errors.push(`Zoom-group WhatsApp send failed: ${msg}`);
+          }
+        }
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       log.error({ err }, "WhatsApp send failed");

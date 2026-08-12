@@ -354,22 +354,24 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
 
       try {
         const secondaries = loadSecondaryTechNames(db, id);
+        const caption = formatWhatsAppCaption(
+          summary,
+          taskShape,
+          sub.app_login,
+          config.SPLYNX_BASE_URL,
+          customerLogin,
+          // Resends keep the *original* submission timestamp rather
+          // than re-stamping to "now" — otherwise "Submitted at" would
+          // misleadingly drift forward each time admin re-fires.
+          new Date(sub.created_at),
+          secondaries,
+        );
+        const fileName = `task-${sub.task_id}-submission-${sub.id}.pdf`;
         const result = await pipelineSendDocument({
           config,
-          caption: formatWhatsAppCaption(
-            summary,
-            taskShape,
-            sub.app_login,
-            config.SPLYNX_BASE_URL,
-            customerLogin,
-            // Resends keep the *original* submission timestamp rather
-            // than re-stamping to "now" — otherwise "Submitted at" would
-            // misleadingly drift forward each time admin re-fires.
-            new Date(sub.created_at),
-            secondaries,
-          ),
+          caption,
           pdfBuffer,
-          fileName: `task-${sub.task_id}-submission-${sub.id}.pdf`,
+          fileName,
         });
         if (!result) return reply.code(400).send({ error: "no_group_configured" });
         if (result.messageId) {
@@ -379,8 +381,51 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
             id,
           );
         }
-        recordAdminAction(db, id, req.session?.app_login ?? null, "resend_whatsapp", { messageId: result.messageId });
-        return { ok: true, message_id: result.messageId };
+
+        // Mirror the pipeline's Zoom-billable dual send. If the stored
+        // summary's job_type is one of the zoom values and a zoom group
+        // is configured, resend the same caption + PDF there too.
+        // Failures here don't block the primary success — the response
+        // reports the zoom outcome separately so the admin sees the
+        // partial state.
+        let zoomMessageId: string | null = null;
+        let zoomError: string | null = null;
+        if (summary.job_type.startsWith("zoom_")) {
+          const zoomJid = getSetting(db, SettingKeys.whatsappZoomGroupJid);
+          if (!zoomJid) {
+            zoomError = "no_zoom_group_configured";
+            req.log.warn(
+              { submissionId: id, jobType: summary.job_type },
+              "resend: Zoom-billable but no zoom group configured — skipping second send",
+            );
+          } else {
+            try {
+              const zoomResult = await pipelineSendDocument({
+                config,
+                caption,
+                pdfBuffer,
+                fileName,
+                jidOverride: zoomJid,
+              });
+              zoomMessageId = zoomResult?.messageId ?? null;
+            } catch (err) {
+              zoomError = err instanceof Error ? err.message : String(err);
+              req.log.error({ err, jid: zoomJid }, "resend: zoom-group WhatsApp send failed");
+            }
+          }
+        }
+
+        recordAdminAction(db, id, req.session?.app_login ?? null, "resend_whatsapp", {
+          messageId: result.messageId,
+          zoomMessageId,
+          zoomError,
+        });
+        return {
+          ok: true,
+          message_id: result.messageId,
+          zoom_message_id: zoomMessageId,
+          zoom_error: zoomError,
+        };
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         recordAdminAction(db, id, req.session?.app_login ?? null, "resend_whatsapp", { error: msg });

@@ -22,6 +22,14 @@ export function deleteSetting(db: Database.Database, key: string): void {
 export const SettingKeys = {
   whatsappGroupJid: "whatsapp_group_jid",
   whatsappGroupName: "whatsapp_group_name",
+  // Secondary group for Zoom-billable submissions (Fibre Install /
+  // ONT Drop / Zoom Reinstall). When set, those submissions get a
+  // second WhatsApp send to this group in addition to the default
+  // group above. Missing / empty → no second send (soft fallback,
+  // just a log warning). Non-Zoom-billable submissions ignore this
+  // setting entirely.
+  whatsappZoomGroupJid: "whatsapp_zoom_group_jid",
+  whatsappZoomGroupName: "whatsapp_zoom_group_name",
   // "1" → AI evaluates the per-job-type requirements checklist on
   // every submission; result lives in submissions.requirements_check_json
   // and surfaces in the admin SubmissionDetail UI only. Anything else
