@@ -69,6 +69,17 @@ interface DuplicateInfo {
   splynx_comment_posted: boolean;
 }
 
+interface RecentSubmission {
+  id: number;
+  task_id: number;
+  status: "pending" | "success" | "partial" | "failed";
+  created_at: number;
+  splynx_comment_id: number | null;
+  amendment_id: number | null;
+}
+
+const AMENDMENT_WINDOW_MS = 24 * 60 * 60 * 1000;
+
 /**
  * crypto.randomUUID() exists in all modern browsers (PWA target is
  * fine), but we fall back to a Math.random-based shape for very old
@@ -107,6 +118,7 @@ export function TaskDetail() {
   // re-send via the duplicate warning panel.
   const idempotencyKey = useRef<string>(makeIdempotencyKey());
   const [duplicateInfo, setDuplicateInfo] = useState<DuplicateInfo | null>(null);
+  const [recentSubmission, setRecentSubmission] = useState<RecentSubmission | null>(null);
   const submitting = phase === "uploading" || phase === "processing";
 
   useEffect(() => {
@@ -140,6 +152,20 @@ export function TaskDetail() {
       .then((r) => setSecondaryTechRoster(r.secondary_techs))
       .catch(() => setSecondaryTechRoster([]));
   }, []);
+
+  // Check whether the calling tech has an in-window submission for this
+  // task. Populates the "You submitted this task Xh ago" banner above the
+  // Update form. Best-effort; on failure the banner is simply hidden and
+  // the tech can still use the form or navigate via URL.
+  useEffect(() => {
+    if (!id) return;
+    api
+      .get<{ submission: RecentSubmission | null }>(
+        `/tasks/${id}/my-recent-submission`,
+      )
+      .then((r) => setRecentSubmission(r.submission))
+      .catch(() => setRecentSubmission(null));
+  }, [id]);
 
   // Revoke object URLs on unmount to avoid leaking blob memory.
   useEffect(() => {
@@ -314,7 +340,18 @@ export function TaskDetail() {
         </details>
       )}
 
+      {recentSubmission && (
+        <RecentSubmissionBanner submission={recentSubmission} />
+      )}
+
       <h2 style={{ marginBottom: 0 }}>Update task</h2>
+      {recentSubmission && (
+        <p className="muted" style={{ margin: "-4px 0 0", fontSize: "0.85em" }}>
+          Submitting again creates a <strong>new</strong> update, separate from
+          the one above. To add extra info to your existing update, tap{" "}
+          <strong>Add amendment</strong>.
+        </p>
+      )}
       <div className="panel stack">
         <PhotoCapture photos={photos} onChange={setPhotos} disabled={submitting} />
 
@@ -405,6 +442,77 @@ export function TaskDetail() {
       )}
     </div>
   );
+}
+
+function RecentSubmissionBanner({ submission }: { submission: RecentSubmission }) {
+  const elapsedMs = Date.now() - submission.created_at;
+  const remainingMs = Math.max(0, AMENDMENT_WINDOW_MS - elapsedMs);
+  const alreadyAmended = submission.amendment_id !== null;
+  const canAmend =
+    !alreadyAmended &&
+    (submission.status === "success" || submission.status === "partial");
+  const statusBadgeClass =
+    submission.status === "success"
+      ? "badge success"
+      : submission.status === "failed"
+        ? "badge danger"
+        : "badge warn";
+
+  return (
+    <div
+      className="stack"
+      style={{
+        gap: 8,
+        padding: "12px 14px",
+        background: "rgba(52, 168, 83, 0.10)",
+        border: "1px solid rgba(52, 168, 83, 0.5)",
+        borderRadius: "var(--r)",
+      }}
+    >
+      <div className="row" style={{ justifyContent: "space-between", flexWrap: "wrap", gap: 6 }}>
+        <strong>You submitted this task {formatElapsed(elapsedMs)} ago.</strong>
+        <span className={statusBadgeClass}>{submission.status.toUpperCase()}</span>
+      </div>
+      <div className="muted" style={{ fontSize: "0.85em" }}>
+        {alreadyAmended
+          ? "You've already added your one amendment."
+          : canAmend
+            ? `Amendment window: ~${formatRemaining(remainingMs)} left.`
+            : "Amendment not available for this submission."}
+      </div>
+      <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+        <Link to={`/submitting/${submission.id}`}>
+          <button className="secondary" type="button">
+            View submission
+          </button>
+        </Link>
+        {canAmend && (
+          <Link to={`/submitting/${submission.id}/amend`}>
+            <button type="button">Add amendment</button>
+          </Link>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function formatElapsed(ms: number): string {
+  const mins = Math.floor(ms / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins} minute${mins === 1 ? "" : "s"}`;
+  const hours = Math.floor(mins / 60);
+  const remMins = mins % 60;
+  if (remMins === 0) return `${hours} hour${hours === 1 ? "" : "s"}`;
+  return `${hours}h ${remMins}m`;
+}
+
+function formatRemaining(ms: number): string {
+  const mins = Math.floor(ms / 60000);
+  if (mins < 60) return `${mins}m`;
+  const hours = Math.floor(mins / 60);
+  const remMins = mins % 60;
+  if (remMins === 0) return `${hours}h`;
+  return `${hours}h ${remMins}m`;
 }
 
 function DuplicateWarning({

@@ -70,6 +70,49 @@ export async function registerTaskRoutes(app: FastifyInstance, config: AppConfig
     }
   });
 
+  // Return the calling tech's most recent submission for this task, but
+  // only when it's still inside the 24h amendment window. Powers the
+  // "You submitted this task Xh ago — Add amendment" banner on the tech
+  // TaskDetail page. Older submissions return { submission: null } so
+  // the frontend never shows the banner past the window (re-visits keep
+  // the normal Submit form as the only path).
+  app.get(
+    "/tasks/:id/my-recent-submission",
+    { preHandler: requireSession },
+    async (req, reply) => {
+      const { id: idParam } = req.params as { id: string };
+      const taskId = Number.parseInt(idParam, 10);
+      if (!Number.isFinite(taskId) || taskId <= 0) {
+        return reply.code(400).send({ error: "invalid_task_id" });
+      }
+      const session = req.session!;
+      const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+      const row = db
+        .prepare(
+          `SELECT s.id, s.task_id, s.status, s.created_at, s.splynx_comment_id,
+                  (SELECT id FROM submission_amendments WHERE submission_id = s.id) AS amendment_id
+           FROM submissions s
+           WHERE s.task_id = ?
+             AND s.app_login = ?
+             AND s.hidden = 0
+             AND s.created_at >= ?
+           ORDER BY s.created_at DESC
+           LIMIT 1`,
+        )
+        .get(taskId, session.app_login, cutoff) as
+        | {
+            id: number;
+            task_id: number;
+            status: string;
+            created_at: number;
+            splynx_comment_id: number | null;
+            amendment_id: number | null;
+          }
+        | undefined;
+      return { submission: row ?? null };
+    },
+  );
+
   // Submit photos + comment against a task. Phase B: storage only. Phase C
   // wraps this with the AI-summary + PDF + WhatsApp + Splynx writeback
   // pipeline.
