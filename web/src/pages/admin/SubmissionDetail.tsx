@@ -78,6 +78,22 @@ interface AdminFlag {
   flagged_by: string | null;
 }
 
+interface Amendment {
+  id: number;
+  submission_id: number;
+  comment: string;
+  actor_login: string;
+  splynx_comment_id: number | null;
+  wa_message_id: string | null;
+  wa_zoom_message_id: string | null;
+  pdf_path: string | null;
+  status: "pending" | "success" | "partial" | "failed";
+  error: string | null;
+  created_at: number;
+  updated_at: number;
+  photos: Photo[];
+}
+
 interface DetailResponse {
   submission: Submission;
   photos: Photo[];
@@ -92,6 +108,8 @@ interface DetailResponse {
   // Admin tracking flag — null when not flagged. Annotation only, never
   // affects effective_score on dashboards.
   admin_flag: AdminFlag | null;
+  // Tech-authored amendment. Null when the tech hasn't added one.
+  amendment: Amendment | null;
 }
 
 interface Summary {
@@ -393,7 +411,7 @@ export function SubmissionDetail() {
   if (error && !data) return <div className="panel danger">{error}</div>;
   if (!data) return <div className="panel muted">Loading…</div>;
 
-  const { submission, photos, actions, splynx_task_url, requirements_check } = data;
+  const { submission, photos, actions, splynx_task_url, requirements_check, amendment } = data;
   const summary = currentSummary(submission);
 
   return (
@@ -430,6 +448,14 @@ export function SubmissionDetail() {
             {submission.wa_message_id !== null && <span className="badge success">WhatsApp ✓</span>}
             {submission.admin_resolved && <span className="badge success">resolved</span>}
             {submission.hidden && <span className="badge warn">hidden</span>}
+            {amendment && (
+              <span
+                className={amendmentBadgeClass(amendment.status)}
+                title={`Amended by tech at ${new Date(amendment.created_at).toLocaleString()}`}
+              >
+                AMENDED
+              </span>
+            )}
           </div>
         </div>
         <div className="muted" style={{ fontSize: "0.9em" }}>
@@ -644,6 +670,10 @@ export function SubmissionDetail() {
           </button>
         </div>
       </div>
+
+      {amendment && (
+        <AmendmentPanel amendment={amendment} submissionId={submission.id} />
+      )}
 
       {/* Photos */}
       <div className="panel stack">
@@ -1004,6 +1034,127 @@ function statusBadge(s: string): string {
   if (s === "success") return "badge success";
   if (s === "failed") return "badge danger";
   return "badge warn";
+}
+
+function amendmentBadgeClass(s: Amendment["status"]): string {
+  if (s === "failed") return "badge danger";
+  if (s === "partial" || s === "pending") return "badge warn";
+  return "badge success";
+}
+
+/**
+ * Tech-authored amendment card. Shows the verbatim comment, timestamps,
+ * delivery status (Splynx / WhatsApp / Zoom group), and any amendment
+ * photos in their own grid. Rendered above the original submission's
+ * Photos panel when the tech has added their one-per-submission amendment.
+ */
+function AmendmentPanel({
+  amendment,
+  submissionId,
+}: {
+  amendment: Amendment;
+  submissionId: number;
+}) {
+  return (
+    <div
+      className="panel stack"
+      style={{
+        border: "1px solid rgba(197, 34, 31, 0.55)",
+        background: "rgba(197, 34, 31, 0.08)",
+      }}
+    >
+      <div className="row" style={{ justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+        <h2 style={{ margin: 0, color: "var(--c-danger)" }}>
+          Tech amendment
+        </h2>
+        <div className="row" style={{ gap: 6, flexWrap: "wrap" }}>
+          <span className={amendmentBadgeClass(amendment.status)}>{amendment.status}</span>
+          {amendment.splynx_comment_id !== null && (
+            <span className="badge success">Splynx ✓</span>
+          )}
+          {amendment.wa_message_id !== null && (
+            <span className="badge success">WhatsApp ✓</span>
+          )}
+          {amendment.wa_zoom_message_id !== null && (
+            <span className="badge success">Zoom group ✓</span>
+          )}
+        </div>
+      </div>
+      <div className="muted" style={{ fontSize: "0.9em" }}>
+        Added by {amendment.actor_login} • {new Date(amendment.created_at).toLocaleString()}
+        {amendment.splynx_comment_id !== null && (
+          <> • Splynx comment #{amendment.splynx_comment_id}</>
+        )}
+      </div>
+      {amendment.error && (
+        <pre
+          style={{
+            whiteSpace: "pre-wrap",
+            background: "#1f1620",
+            color: "var(--c-danger)",
+            padding: 12,
+            borderRadius: 6,
+            fontFamily: "inherit",
+            margin: 0,
+          }}
+        >
+          {amendment.error}
+        </pre>
+      )}
+      {amendment.comment.trim() && (
+        <div>
+          <strong>Additional notes</strong>
+          <p style={{ whiteSpace: "pre-wrap", margin: "4px 0 0" }}>{amendment.comment}</p>
+        </div>
+      )}
+      <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+        <a
+          href={`/api/submissions/${submissionId}/amendment/pdf`}
+          target="_blank"
+          rel="noreferrer"
+        >
+          <button className="secondary" type="button">Amendment PDF</button>
+        </a>
+      </div>
+      {amendment.photos.length > 0 && (
+        <div>
+          <div className="muted" style={{ fontSize: "0.85em", marginBottom: 6 }}>
+            Amendment photos ({amendment.photos.length})
+          </div>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))",
+              gap: 6,
+            }}
+          >
+            {amendment.photos.map((p) => (
+              <a
+                key={p.id}
+                href={`/api/submissions/${submissionId}/photos/${p.filename}`}
+                target="_blank"
+                rel="noreferrer"
+                style={{
+                  aspectRatio: "1 / 1",
+                  borderRadius: "var(--r)",
+                  overflow: "hidden",
+                  background: "#000",
+                  display: "block",
+                }}
+              >
+                <img
+                  src={`/api/submissions/${submissionId}/photos/${p.filename}`}
+                  alt=""
+                  loading="lazy"
+                  style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                />
+              </a>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 /**

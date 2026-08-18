@@ -83,9 +83,12 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
         `SELECT s.id, s.task_id, s.app_login, s.source, s.comment, s.summary_json,
                 s.splynx_comment_id, s.wa_message_id, s.status, s.admin_resolved,
                 s.hidden, s.created_at, s.updated_at,
-                r.ai_score, r.admin_score
+                r.ai_score, r.admin_score,
+                a.created_at AS amendment_added_at,
+                a.status AS amendment_status
          FROM submissions s
          LEFT JOIN submission_ratings r ON r.submission_id = s.id
+         LEFT JOIN submission_amendments a ON a.submission_id = s.id
          ${where}
          ORDER BY s.id DESC
          LIMIT ?`,
@@ -106,6 +109,8 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
       updated_at: number;
       ai_score: number | null;
       admin_score: number | null;
+      amendment_added_at: number | null;
+      amendment_status: string | null;
     }>;
 
     const items = rows.map((r) => ({
@@ -124,6 +129,12 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
       created_at: r.created_at,
       ai_score: r.ai_score,
       admin_score: r.admin_score,
+      // Populated when the tech has added their one-per-submission
+      // amendment. Null otherwise. Frontend renders an "AMENDED" badge
+      // and can key colouring off amendment_status ('success' vs
+      // 'partial' vs 'failed').
+      amendment_added_at: r.amendment_added_at,
+      amendment_status: r.amendment_status,
     }));
 
     const nextCursor = rows.length === limit ? rows[rows.length - 1]!.id : null;
@@ -186,10 +197,15 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
       if (parsed.success) requirementsCheck = parsed.data;
     }
 
+    // Original-submission photos only. Amendment photos live in the same
+    // table with amendment_id set; they're returned under `amendment`
+    // below so the admin UI can group them with the amendment card.
     const photos = db
       .prepare(
         `SELECT id, filename, size_bytes, width, height, splynx_file_id
-         FROM submission_photos WHERE submission_id = ? ORDER BY id ASC`,
+         FROM submission_photos
+         WHERE submission_id = ? AND amendment_id IS NULL
+         ORDER BY id ASC`,
       )
       .all(id) as Array<{
       id: number;
@@ -199,6 +215,49 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
       height: number;
       splynx_file_id: number | null;
     }>;
+
+    // Tech-authored amendment (0 or 1). Includes its own photo set so the
+    // detail view can render an "Amendment" panel below the original.
+    const amendmentRow = db
+      .prepare(
+        `SELECT id, submission_id, comment, actor_login, splynx_comment_id,
+                wa_message_id, wa_zoom_message_id, pdf_path, status, error,
+                created_at, updated_at
+         FROM submission_amendments WHERE submission_id = ?`,
+      )
+      .get(id) as
+      | {
+          id: number;
+          submission_id: number;
+          comment: string;
+          actor_login: string;
+          splynx_comment_id: number | null;
+          wa_message_id: string | null;
+          wa_zoom_message_id: string | null;
+          pdf_path: string | null;
+          status: string;
+          error: string | null;
+          created_at: number;
+          updated_at: number;
+        }
+      | undefined;
+    const amendmentPhotos = amendmentRow
+      ? (db
+          .prepare(
+            `SELECT id, filename, size_bytes, width, height, splynx_file_id
+             FROM submission_photos
+             WHERE amendment_id = ?
+             ORDER BY id ASC`,
+          )
+          .all(amendmentRow.id) as Array<{
+          id: number;
+          filename: string;
+          size_bytes: number;
+          width: number;
+          height: number;
+          splynx_file_id: number | null;
+        }>)
+      : [];
 
     const actions = db
       .prepare(
@@ -240,6 +299,10 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
             flagged_at: sub.admin_flagged_at,
             flagged_by: sub.admin_flagged_by,
           }
+        : null,
+      // Tech-authored amendment. Null when the tech hasn't amended.
+      amendment: amendmentRow
+        ? { ...amendmentRow, photos: amendmentPhotos }
         : null,
     };
   });

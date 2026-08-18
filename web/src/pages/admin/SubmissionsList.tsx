@@ -16,6 +16,8 @@ interface Item {
   created_at: number;
   ai_score: number | null;
   admin_score: number | null;
+  amendment_added_at: number | null;
+  amendment_status: "pending" | "success" | "partial" | "failed" | null;
 }
 
 interface Page {
@@ -182,6 +184,17 @@ export function SubmissionsList() {
                           hidden
                         </span>
                       )}
+                      {it.amendment_added_at !== null && (
+                        <span
+                          className={amendmentBadgeClass(it.amendment_status)}
+                          style={{ marginRight: 6, fontSize: "0.7em" }}
+                          title={`Amended by tech at ${new Date(
+                            it.amendment_added_at,
+                          ).toLocaleString()}`}
+                        >
+                          amended
+                        </span>
+                      )}
                       {it.headline ?? <span className="muted">—</span>}
                     </td>
                     <td style={td()}>
@@ -219,6 +232,13 @@ function statusBadge(s: Item["status"]): string {
   if (s === "success") return "badge success";
   if (s === "failed") return "badge danger";
   return "badge warn";
+}
+
+function amendmentBadgeClass(s: Item["amendment_status"]): string {
+  if (s === "failed") return "badge danger";
+  if (s === "partial" || s === "pending") return "badge warn";
+  // 'success' or null (edge case: row exists but status not populated yet).
+  return "badge success";
 }
 
 function ratingDisplay(ai: number | null, admin: number | null): React.ReactNode {
