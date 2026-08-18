@@ -308,6 +308,39 @@ function migrate(d: Database.Database): void {
     d.exec(`ALTER TABLE admin_actions ADD COLUMN actor_login TEXT`);
   }
 
+  // 2026-08-18: tech-authored amendments. A tech may append exactly one
+  // amendment to their own submission within 24 hours of submitting it.
+  // The original submissions row is never modified; the amendment is a
+  // separate row with its own comment, Splynx-comment id, WhatsApp
+  // message ids, and status. Enforced-single via UNIQUE(submission_id).
+  // See docs in server/src/pipeline/submit-amendment.ts.
+  d.exec(`
+    CREATE TABLE IF NOT EXISTS submission_amendments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      submission_id INTEGER NOT NULL UNIQUE REFERENCES submissions(id),
+      comment TEXT NOT NULL,
+      actor_login TEXT NOT NULL,
+      splynx_comment_id INTEGER,
+      splynx_pdf_file_id INTEGER,
+      wa_message_id TEXT,
+      wa_zoom_message_id TEXT,
+      pdf_path TEXT,
+      status TEXT NOT NULL,
+      error TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_amendments_submission
+      ON submission_amendments(submission_id);
+  `);
+  const photoCols = cols("submission_photos");
+  if (!photoCols.has("amendment_id")) {
+    d.exec(`ALTER TABLE submission_photos ADD COLUMN amendment_id INTEGER NULL
+              REFERENCES submission_amendments(id)`);
+    d.exec(`CREATE INDEX IF NOT EXISTS idx_photos_amendment
+              ON submission_photos(amendment_id) WHERE amendment_id IS NOT NULL`);
+  }
+
   // 2026-05-04: rating scale migrated from 1–5 to 1–10. Existing scores are
   // doubled so the meaning of historical ratings (and the few-shot calibration
   // they provide to the AI) is preserved one-for-one. Idempotent via the

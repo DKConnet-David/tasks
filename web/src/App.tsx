@@ -4,6 +4,7 @@ import { Login } from "./pages/Login";
 import { TaskLookup } from "./pages/TaskLookup";
 import { TaskDetail } from "./pages/TaskDetail";
 import { Submitting } from "./pages/Submitting";
+import { TaskAmend } from "./pages/TaskAmend";
 import { AdminLayout } from "./pages/admin/AdminLayout";
 import { SubmissionsList } from "./pages/admin/SubmissionsList";
 import { SubmissionDetail } from "./pages/admin/SubmissionDetail";
@@ -25,6 +26,7 @@ export function App() {
         <Route path="/" element={<RequireAuth><TaskLookup /></RequireAuth>} />
         <Route path="/tasks/:id" element={<RequireAuth><TaskDetail /></RequireAuth>} />
         <Route path="/submitting/:id" element={<RequireAuth><Submitting /></RequireAuth>} />
+        <Route path="/submitting/:id/amend" element={<RequireAuth><TaskAmend /></RequireAuth>} />
 
         <Route path="/admin" element={<RequireAdmin><AdminLayout /></RequireAdmin>}>
           <Route index element={<SubmissionsList />} />

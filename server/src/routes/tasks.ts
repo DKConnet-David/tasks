@@ -8,6 +8,7 @@ import type { AppConfig } from "../config.js";
 import { getDb } from "../db.js";
 import { photoPath, processAndSavePhoto, type SourcePhoto } from "../photos/store.js";
 import { runSubmissionPipeline } from "../pipeline/submit-task.js";
+import { runAmendmentPipeline } from "../pipeline/submit-amendment.js";
 import { ZOOM_BILLABLE_TYPES, type ZoomBillableType } from "../types.js";
 
 const MAX_PHOTOS = 100;
@@ -388,11 +389,14 @@ export async function registerTaskRoutes(app: FastifyInstance, config: AppConfig
       return reply.code(403).send({ error: "forbidden" });
     }
 
+    // Original submission photos only (amendment photos live in the same
+    // table with amendment_id set; they're returned separately below so
+    // the UI can render them under the amendment card).
     const photos = db
       .prepare(
         `SELECT id, filename, size_bytes, width, height
          FROM submission_photos
-         WHERE submission_id = ?
+         WHERE submission_id = ? AND amendment_id IS NULL
          ORDER BY id ASC`,
       )
       .all(submissionId) as {
@@ -403,9 +407,53 @@ export async function registerTaskRoutes(app: FastifyInstance, config: AppConfig
       height: number;
     }[];
 
+    // Tech-authored amendment (at most one per submission, enforced by
+    // UNIQUE(submission_id) on the amendments table). Null when the
+    // tech hasn't added one yet.
+    const amendmentRow = db
+      .prepare(
+        `SELECT id, submission_id, comment, actor_login, splynx_comment_id,
+                wa_message_id, wa_zoom_message_id, status, error, created_at, updated_at
+         FROM submission_amendments WHERE submission_id = ?`,
+      )
+      .get(submissionId) as
+      | {
+          id: number;
+          submission_id: number;
+          comment: string;
+          actor_login: string;
+          splynx_comment_id: number | null;
+          wa_message_id: string | null;
+          wa_zoom_message_id: string | null;
+          status: string;
+          error: string | null;
+          created_at: number;
+          updated_at: number;
+        }
+      | undefined;
+    const amendmentPhotos = amendmentRow
+      ? (db
+          .prepare(
+            `SELECT id, filename, size_bytes, width, height
+             FROM submission_photos
+             WHERE amendment_id = ?
+             ORDER BY id ASC`,
+          )
+          .all(amendmentRow.id) as {
+          id: number;
+          filename: string;
+          size_bytes: number;
+          width: number;
+          height: number;
+        }[])
+      : [];
+
     return {
       submission: row,
       photos,
+      amendment: amendmentRow
+        ? { ...amendmentRow, photos: amendmentPhotos }
+        : null,
     };
   });
 
@@ -487,6 +535,254 @@ export async function registerTaskRoutes(app: FastifyInstance, config: AppConfig
 
       reply.header("Content-Type", "image/jpeg");
       reply.header("Cache-Control", "private, max-age=86400");
+      return reply.send(createReadStream(absPath));
+    },
+  );
+
+  // Tech-authored amendment. Adds exactly one follow-up comment + photos
+  // to an already-submitted job within 24h of the original. Original row
+  // is never modified. See server/src/pipeline/submit-amendment.ts.
+  const AMENDMENT_WINDOW_MS = 24 * 60 * 60 * 1000;
+  const AMENDMENT_COMMENT_MAX = 4000;
+  const AMENDMENT_MAX_PHOTOS = 20;
+
+  app.post(
+    "/tasks/submissions/:id/amendment",
+    { preHandler: requireSession },
+    async (req, reply) => {
+      const { id: idParam } = req.params as { id: string };
+      const submissionId = Number.parseInt(idParam, 10);
+      if (!Number.isFinite(submissionId) || submissionId <= 0) {
+        return reply.code(400).send({ error: "invalid_submission_id" });
+      }
+      const session = req.session!;
+
+      // Load and gate on: existence, ownership, status, time window, single-use.
+      const submission = db
+        .prepare(
+          `SELECT id, task_id, app_login, status, created_at
+           FROM submissions WHERE id = ?`,
+        )
+        .get(submissionId) as
+        | { id: number; task_id: number; app_login: string; status: string; created_at: number }
+        | undefined;
+      if (!submission) return reply.code(404).send({ error: "submission_not_found" });
+      if (!session.is_admin && submission.app_login !== session.app_login) {
+        return reply.code(403).send({ error: "forbidden" });
+      }
+      if (submission.status !== "success" && submission.status !== "partial") {
+        return reply.code(409).send({
+          error: "invalid_submission_status",
+          detail: `Amendments only allowed on success or partial submissions (current: ${submission.status}).`,
+        });
+      }
+      const elapsedMs = Date.now() - submission.created_at;
+      if (elapsedMs > AMENDMENT_WINDOW_MS) {
+        return reply.code(409).send({
+          error: "amendment_window_expired",
+          window_hours: 24,
+          elapsed_hours: Math.round((elapsedMs / (60 * 60 * 1000)) * 10) / 10,
+        });
+      }
+      const existing = db
+        .prepare(`SELECT id FROM submission_amendments WHERE submission_id = ?`)
+        .get(submissionId) as { id: number } | undefined;
+      if (existing) {
+        return reply.code(409).send({
+          error: "amendment_already_exists",
+          amendment_id: existing.id,
+        });
+      }
+
+      if (!req.isMultipart()) {
+        return reply.code(400).send({ error: "expected_multipart" });
+      }
+
+      let comment = "";
+      const photos: SourcePhoto[] = [];
+      try {
+        for await (const part of req.parts()) {
+          if (part.type === "field" && part.fieldname === "comment") {
+            comment = String(part.value).slice(0, AMENDMENT_COMMENT_MAX);
+          } else if (part.type === "file" && part.fieldname === "photos") {
+            if (!part.mimetype.startsWith("image/")) {
+              await part.toBuffer();
+              continue;
+            }
+            if (photos.length >= AMENDMENT_MAX_PHOTOS) {
+              await part.toBuffer();
+              continue;
+            }
+            const buffer = await part.toBuffer();
+            photos.push({
+              buffer,
+              mimetype: part.mimetype,
+              originalFilename: part.filename,
+            });
+          }
+        }
+      } catch (err) {
+        req.log.error({ err }, "amendment multipart parse failed");
+        return reply.code(400).send({ error: "multipart_parse_failed" });
+      }
+
+      if (!comment.trim() && photos.length === 0) {
+        return reply.code(400).send({ error: "empty_amendment" });
+      }
+
+      const now = Date.now();
+      let amendmentId: number;
+      try {
+        const insert = db
+          .prepare(
+            `INSERT INTO submission_amendments
+               (submission_id, comment, actor_login, status, created_at, updated_at)
+             VALUES (?, ?, ?, 'pending', ?, ?)`,
+          )
+          .run(submissionId, comment, session.app_login, now, now);
+        amendmentId = Number(insert.lastInsertRowid);
+      } catch (err) {
+        // Rare race: two amendments arrive concurrently and the second
+        // trips the UNIQUE(submission_id) constraint. Treat as "already
+        // exists" so the client gets the same shape as the pre-check.
+        const e = err as { code?: string; message?: string };
+        req.log.warn({ err: e }, "amendment insert failed (likely unique conflict)");
+        return reply.code(409).send({ error: "amendment_already_exists" });
+      }
+
+      // Persist photos under the same task/submission folder as the
+      // original. amendment_id column on the row distinguishes them from
+      // original photos.
+      let savedCount = 0;
+      let failedCount = 0;
+      const insertPhoto = db.prepare(
+        `INSERT INTO submission_photos
+           (submission_id, amendment_id, filename, size_bytes, width, height, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      );
+      for (const src of photos) {
+        try {
+          const saved = await processAndSavePhoto(
+            src,
+            config.DATA_DIR,
+            submission.task_id,
+            submissionId,
+          );
+          insertPhoto.run(
+            submissionId,
+            amendmentId,
+            saved.filename,
+            saved.size_bytes,
+            saved.width,
+            saved.height,
+            Date.now(),
+          );
+          savedCount += 1;
+        } catch (err) {
+          req.log.error(
+            { err, originalFilename: src.originalFilename },
+            "amendment photo save failed",
+          );
+          failedCount += 1;
+        }
+      }
+
+      // Run the pipeline (PDF + Splynx + WhatsApp dual-send). Errors are
+      // captured inside — this call itself throws only on programmer error.
+      let result;
+      try {
+        result = await runAmendmentPipeline({
+          config,
+          db,
+          log: req.log,
+          submissionId,
+          amendmentId,
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        req.log.error({ err }, "amendment pipeline threw");
+        db.prepare(
+          `UPDATE submission_amendments SET status = 'failed', error = ?, updated_at = ? WHERE id = ?`,
+        ).run(msg, Date.now(), amendmentId);
+        return reply.code(500).send({
+          amendment_id: amendmentId,
+          status: "failed",
+          error: msg,
+        });
+      }
+
+      // Audit trail. actor_login is the tech's session login; the row
+      // lands alongside admin actions in admin_actions so the operator's
+      // existing dashboard picks it up without extra plumbing.
+      db.prepare(
+        `INSERT INTO admin_actions (submission_id, actor_login, action, details_json, created_at)
+         VALUES (?, ?, 'tech_amendment', ?, ?)`,
+      ).run(
+        submissionId,
+        session.app_login,
+        JSON.stringify({
+          amendment_id: amendmentId,
+          comment_length: comment.length,
+          photo_count: savedCount,
+          photos_failed: failedCount,
+          splynx_comment_id: result.splynxCommentId,
+          wa_message_id: result.waMessageId,
+          wa_zoom_message_id: result.waZoomMessageId,
+          hours_after_original: Math.round((elapsedMs / (60 * 60 * 1000)) * 10) / 10,
+          status: result.status,
+        }),
+        Date.now(),
+      );
+
+      return reply.code(201).send({
+        amendment_id: amendmentId,
+        submission_id: submissionId,
+        status: result.status,
+        photos_saved: savedCount,
+        photos_failed: failedCount,
+        splynx_comment_id: result.splynxCommentId,
+        wa_message_id: result.waMessageId,
+        wa_zoom_message_id: result.waZoomMessageId,
+        errors: result.errors,
+      });
+    },
+  );
+
+  // Serve the amendment PDF.
+  app.get(
+    "/submissions/:id/amendment/pdf",
+    { preHandler: requireSession },
+    async (req, reply) => {
+      const { id: idParam } = req.params as { id: string };
+      const submissionId = Number.parseInt(idParam, 10);
+      if (!Number.isFinite(submissionId) || submissionId <= 0) {
+        return reply.code(400).send({ error: "invalid_submission_id" });
+      }
+      const session = req.session!;
+      const row = db
+        .prepare(`SELECT task_id, app_login FROM submissions WHERE id = ?`)
+        .get(submissionId) as { task_id: number; app_login: string } | undefined;
+      if (!row) return reply.code(404).send({ error: "submission_not_found" });
+      if (!session.is_admin && row.app_login !== session.app_login) {
+        return reply.code(403).send({ error: "forbidden" });
+      }
+      const absPath = path.join(
+        config.DATA_DIR,
+        "photos",
+        String(row.task_id),
+        String(submissionId),
+        "report-amendment.pdf",
+      );
+      try {
+        await fs.stat(absPath);
+      } catch {
+        return reply.code(404).send({ error: "amendment_pdf_not_found" });
+      }
+      reply.header("Content-Type", "application/pdf");
+      reply.header(
+        "Content-Disposition",
+        `inline; filename="task-${row.task_id}-submission-${submissionId}-amendment.pdf"`,
+      );
       return reply.send(createReadStream(absPath));
     },
   );

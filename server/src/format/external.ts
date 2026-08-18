@@ -157,6 +157,79 @@ export function formatWhatsAppCaption(
 }
 
 /**
+ * Splynx comment body for a tech-authored amendment. Deliberately minimal:
+ * a red "AMENDMENT" banner, when it was added, what the tech typed, and a
+ * back-reference to the original submission-comment id so the office can
+ * pair the two rows on the Splynx task. No structured summary — amendments
+ * are verbatim, no AI processing.
+ */
+export function formatSplynxAmendmentComment(args: {
+  amendmentComment: string;
+  techName: string;
+  originalCommentId: number | null;
+  originalSubmittedAt: Date;
+  amendmentAddedAt: Date;
+}): string {
+  const parts: string[] = [];
+  parts.push(
+    `<strong style="color:#c5221f">AMENDMENT — added ${escapeHtml(
+      formatSubmittedAt(args.amendmentAddedAt),
+    )}</strong>`,
+  );
+  const originalRef =
+    args.originalCommentId !== null
+      ? `original submission comment #${args.originalCommentId} at ${formatSubmittedAt(
+          args.originalSubmittedAt,
+        )}`
+      : `original submission at ${formatSubmittedAt(args.originalSubmittedAt)}`;
+  parts.push(`<br><em>Amends ${escapeHtml(originalRef)}</em>`);
+  parts.push(`<br><em>Added by ${escapeHtml(args.techName)} via Task Updater</em>`);
+  if (args.amendmentComment.trim()) {
+    parts.push("<br><br>");
+    parts.push(`<strong>Additional notes</strong><br>${nl2br(escapeHtml(args.amendmentComment))}`);
+  }
+  return parts.join("");
+}
+
+/**
+ * WhatsApp caption for the amendment PDF. Keeps the visual "AMENDMENT"
+ * cue at the top so the office instantly sees this isn't a re-submit,
+ * with a back-reference to the original timestamp and the Splynx task
+ * link. The verbatim amendment text is included so a reader who doesn't
+ * open the PDF still gets the delta.
+ */
+export function formatWhatsAppAmendmentCaption(args: {
+  taskId: number;
+  taskTitle: string;
+  taskAddress: string;
+  techName: string;
+  originalSubmittedAt: Date;
+  amendmentAddedAt: Date;
+  amendmentComment: string;
+  splynxBaseUrl: string;
+  customerLogin: string | null;
+}): string {
+  const lines: string[] = [];
+  lines.push(`*AMENDMENT — Task #${args.taskId}*`);
+  lines.push("");
+  lines.push(`• Technician: *${args.techName.trim()}*`);
+  lines.push(`• Original submitted: ${formatSubmittedAt(args.originalSubmittedAt)}`);
+  lines.push(`• Amendment added: ${formatSubmittedAt(args.amendmentAddedAt)}`);
+  const accountTrim = (args.customerLogin ?? "").trim();
+  if (accountTrim) lines.push(`• Account: ${accountTrim}`);
+  const addressTrim = args.taskAddress.trim();
+  if (addressTrim) lines.push(`• Location: ${addressTrim}`);
+  if (args.amendmentComment.trim()) {
+    lines.push("");
+    lines.push("*Additional notes*");
+    lines.push(args.amendmentComment.trim());
+  }
+  lines.push("");
+  lines.push(`🔗 ${splynxTaskUrl(args.splynxBaseUrl, args.taskId)}`);
+  return lines.join("\n");
+}
+
+/**
  * Render a Date as `YYYY-MM-DD HH:MM` in the container's local timezone.
  * The container's `TZ` env var (Africa/Johannesburg in production) drives
  * the field accessors here, so the output matches what the operator

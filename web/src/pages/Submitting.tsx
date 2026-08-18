@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { ApiError, api } from "../api";
+import { useAuth } from "../auth";
 
 interface Submission {
   id: number;
@@ -44,13 +45,32 @@ interface Summary {
   issues_notes?: string[];
 }
 
-interface SubmissionResponse {
-  submission: Submission;
+interface Amendment {
+  id: number;
+  submission_id: number;
+  comment: string;
+  actor_login: string;
+  splynx_comment_id: number | null;
+  wa_message_id: string | null;
+  wa_zoom_message_id: string | null;
+  status: "pending" | "success" | "partial" | "failed";
+  error: string | null;
+  created_at: number;
+  updated_at: number;
   photos: Photo[];
 }
 
+interface SubmissionResponse {
+  submission: Submission;
+  photos: Photo[];
+  amendment: Amendment | null;
+}
+
+const AMENDMENT_WINDOW_MS = 24 * 60 * 60 * 1000;
+
 export function Submitting() {
   const { id } = useParams<{ id: string }>();
+  const { me } = useAuth();
   const [data, setData] = useState<SubmissionResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -82,10 +102,21 @@ export function Submitting() {
     );
   }
 
-  const { submission, photos } = data;
+  const { submission, photos, amendment } = data;
   const summary: Summary | null = submission.summary_json
     ? safeParseSummary(submission.summary_json)
     : null;
+  // Amendment button visibility: owner (or admin), submission has landed
+  // (success/partial), no existing amendment, within the 24h window.
+  const ownsSubmission =
+    !!me && (me.is_admin || me.app_login === submission.app_login);
+  const withinWindow =
+    Date.now() - submission.created_at < AMENDMENT_WINDOW_MS;
+  const canAmend =
+    ownsSubmission &&
+    !amendment &&
+    withinWindow &&
+    (submission.status === "success" || submission.status === "partial");
   const statusBadgeClass =
     submission.status === "success"
       ? "badge success"
@@ -224,6 +255,87 @@ export function Submitting() {
         </div>
       )}
 
+      {canAmend && (
+        <div className="panel stack">
+          <strong>Forgot something?</strong>
+          <p className="muted" style={{ margin: 0, fontSize: "0.9em" }}>
+            You can add one amendment (extra note + optional photos) within 24 hours
+            of your original submission. The original stays as-is — the amendment is
+            recorded separately and sent to the WhatsApp group + Splynx.
+          </p>
+          <Link to={`/submitting/${submission.id}/amend`}>
+            <button>Add amendment</button>
+          </Link>
+        </div>
+      )}
+
+      {amendment && (
+        <div className="panel stack">
+          <div className="row" style={{ justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+            <strong style={{ color: "var(--c-danger)" }}>
+              AMENDMENT — added {new Date(amendment.created_at).toLocaleString()}
+            </strong>
+            <span className={amendmentBadgeClass(amendment.status)}>
+              {amendment.status.toUpperCase()}
+            </span>
+          </div>
+          <div className="muted" style={{ fontSize: "0.85em" }}>
+            by {amendment.actor_login}
+            {amendment.splynx_comment_id !== null && " · Splynx ✓"}
+            {amendment.wa_message_id !== null && " · WhatsApp ✓"}
+            {amendment.wa_zoom_message_id !== null && " · Zoom group ✓"}
+          </div>
+          {amendment.error && (
+            <div className="warn" style={{ fontSize: "0.85em", whiteSpace: "pre-wrap" }}>
+              {amendment.error}
+            </div>
+          )}
+          {amendment.comment && (
+            <div style={{ whiteSpace: "pre-wrap" }}>{amendment.comment}</div>
+          )}
+          <div className="row" style={{ gap: 8 }}>
+            <a
+              href={`/api/submissions/${submission.id}/amendment/pdf`}
+              target="_blank"
+              rel="noreferrer"
+            >
+              <button className="secondary">Amendment PDF</button>
+            </a>
+          </div>
+          {amendment.photos.length > 0 && (
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))",
+                gap: 6,
+              }}
+            >
+              {amendment.photos.map((p) => (
+                <a
+                  key={p.id}
+                  href={`/api/submissions/${submission.id}/photos/${p.filename}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{
+                    aspectRatio: "1 / 1",
+                    borderRadius: "var(--r)",
+                    overflow: "hidden",
+                    background: "#000",
+                  }}
+                >
+                  <img
+                    src={`/api/submissions/${submission.id}/photos/${p.filename}`}
+                    alt=""
+                    loading="lazy"
+                    style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                  />
+                </a>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       <h2 style={{ marginBottom: 0 }}>Photos ({photos.length})</h2>
       {photos.length === 0 ? (
         <p className="muted">No photos saved.</p>
@@ -278,6 +390,12 @@ function Bullet({ label, value }: { label: string; value: string | undefined }) 
       <strong>{label}:</strong> {value}
     </li>
   );
+}
+
+function amendmentBadgeClass(s: Amendment["status"]): string {
+  if (s === "success") return "badge success";
+  if (s === "failed") return "badge danger";
+  return "badge warn";
 }
 
 function hasOverview(o: NonNullable<Summary["overview"]>): boolean {
