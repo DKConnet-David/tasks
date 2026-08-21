@@ -54,26 +54,32 @@ export async function registerAdminRoutes(app: FastifyInstance, config: AppConfi
     if (!parsed.success) return reply.code(400).send({ error: "invalid_query" });
     const { status, login, q, cursor, limit, include_hidden } = parsed.data;
 
+    // Every predicate is qualified with `s.` — the SELECT below LEFT JOINs
+    // submission_ratings and submission_amendments, both of which share
+    // column names (`comment`, `status`, `id`, `created_at`) with the
+    // submissions row. Without the qualifier SQLite raises
+    // "ambiguous column name" and returns a 500 for any query that
+    // filters on those columns.
     const wheres: string[] = [];
     const params: unknown[] = [];
     if (!include_hidden) {
-      wheres.push("hidden = 0");
+      wheres.push("s.hidden = 0");
     }
     if (status) {
-      wheres.push("status = ?");
+      wheres.push("s.status = ?");
       params.push(status);
     }
     if (login) {
-      wheres.push("app_login = ?");
+      wheres.push("s.app_login = ?");
       params.push(login);
     }
     if (q) {
-      wheres.push("(comment LIKE ? OR summary_json LIKE ? OR CAST(task_id AS TEXT) LIKE ?)");
+      wheres.push("(s.comment LIKE ? OR s.summary_json LIKE ? OR CAST(s.task_id AS TEXT) LIKE ?)");
       const needle = `%${q}%`;
       params.push(needle, needle, needle);
     }
     if (cursor) {
-      wheres.push("id < ?");
+      wheres.push("s.id < ?");
       params.push(cursor);
     }
     const where = wheres.length ? `WHERE ${wheres.join(" AND ")}` : "";
