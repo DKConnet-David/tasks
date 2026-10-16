@@ -205,6 +205,12 @@ export async function ratePerformance(args: RateArgs): Promise<InternalRating> {
   // silently drops the bonus items so the rating still saves; we log
   // when we had to truncate so calibration drift is visible.
   const raw = toolUse.input as Record<string, unknown>;
+  // Claude occasionally returns a lone bullet as a string instead of ["..."].
+  // Wrap it so the rating is kept rather than failing Zod and being dropped.
+  for (const key of ["strengths", "improvements"] as const) {
+    const v = raw[key];
+    if (typeof v === "string") raw[key] = v.trim() ? [v.trim()] : [];
+  }
   const MAX_ITEMS = 5;
   if (Array.isArray(raw.strengths) && raw.strengths.length > MAX_ITEMS) {
     console.warn(
