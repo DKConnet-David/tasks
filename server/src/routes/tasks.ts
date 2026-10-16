@@ -61,12 +61,13 @@ export async function registerTaskRoutes(app: FastifyInstance, config: AppConfig
       ]);
       return { task, comments };
     } catch (err) {
-      const e = err as { response?: { status?: number; data?: unknown } };
+      const e = err as { response?: { status?: number; data?: unknown }; code?: string };
       if (e.response?.status === 404) {
         return reply.code(404).send({ error: "task_not_found" });
       }
       req.log.error({ err: e }, "splynx task fetch failed");
-      return reply.code(502).send({ error: "splynx_error", status: e.response?.status });
+      // code = axios network error (ENOTFOUND, ETIMEDOUT...) when there is no HTTP status.
+      return reply.code(502).send({ error: "splynx_error", status: e.response?.status, code: e.code });
     }
   });
 

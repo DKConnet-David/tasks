@@ -134,7 +134,10 @@ export function TaskDetail() {
           else if (e.status === 400) setError("Invalid task ID.");
           else if (e.status === 503)
             setError("Splynx isn't configured on the server. Check the SPLYNX_API_KEY / SPLYNX_API_SECRET env vars.");
-          else if (e.status === 502) setError("Splynx is unreachable or returned an error.");
+          else if (e.status === 502) {
+            const b = e.body as { status?: number; code?: string } | null;
+            setError(`Splynx is unreachable or returned an error (${b?.status ?? b?.code ?? "unknown"}).`);
+          }
           else setError(`Failed to load task (${e.status}).`);
         } else {
           setError("Failed to load task — network error.");
